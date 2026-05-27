@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Pipeline Hardening"
+  short_description: "Promote repo fixes into LLM Wiki pipeline."
+  default_prompt: "Harden the LLM Wiki pipeline using completed <repo_name> backfill evidence in <wiki_root>. Auto-detect or create the Python environment."

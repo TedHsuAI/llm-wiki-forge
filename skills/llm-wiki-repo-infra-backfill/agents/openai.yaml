@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Repo Infra Backfill"
+  short_description: "Backfill one repo's LLM Wiki infrastructure."
+  default_prompt: "Backfill the LLM Wiki infrastructure for repo <repo_name> in wiki root <wiki_root>. Auto-detect or create the Python environment, one repo only."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Master Sync"
+  short_description: "Refresh LLM Wiki with quality gates."
+  default_prompt: "Compare <repo_path> changes against the recorded LLM Wiki baseline in <wiki_root>. Auto-detect or create the Python environment, update impacted artifacts, run quality gates, and accept the new baseline only after review."

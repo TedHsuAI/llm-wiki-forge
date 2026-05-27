@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Build"
+  short_description: "Build an LLM Wiki from one repo with a standard flow."
+  default_prompt: "Build an LLM Wiki for repo <repo_path> at wiki root <wiki_root>. Auto-detect or create the Python environment, state the resolved paths, bootstrap if needed, onboard one module, run focused validation, and report PASS/PARTIAL/FAIL."

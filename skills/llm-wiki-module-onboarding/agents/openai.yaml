@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Module Onboarding"
+  short_description: "Add a repo as a semantic-ready LLM Wiki module."
+  default_prompt: "Add <project_name> into my existing LLM Wiki as a semantic-ready module. The repo path is <repo_path> and the wiki root is <wiki_root>. Auto-detect or create the Python environment before running."

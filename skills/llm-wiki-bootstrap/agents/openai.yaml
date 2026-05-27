@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Bootstrap"
+  short_description: "Create a first-run LLM Wiki scaffold."
+  default_prompt: "Bootstrap a new LLM Wiki environment for repo <repo_path> at wiki root <wiki_root>. Auto-detect or create the Python environment, then hand off to module onboarding."

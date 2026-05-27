@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Integrity Validate"
+  short_description: "Run read-only LLM Wiki safety and regression validation."
+  default_prompt: "Validate my LLM Wiki at <wiki_root> without modifying files. Auto-detect or create the Python environment, check scope, module artifacts, semantic query evidence, communities, evals, and report whether it is safe to proceed."
