@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -175,6 +176,38 @@ def run_onboarding_steps(
     )
 
 
+def is_git_repo(repo_path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "rev-parse", "--is-inside-work-tree"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def initialize_sync_state(wiki_root: Path, python_path: Path, repo_path: Path, project_name: str) -> None:
+    if not is_git_repo(repo_path):
+        info("Repo sync state: skipped (source repo is not git-backed)")
+        return
+    run_wiki_command(
+        wiki_root,
+        python_path,
+        "scripts.repo_sync.diff_wiki",
+        "--wiki-root",
+        str(wiki_root),
+        "--repo-root",
+        str(repo_path),
+        "--state",
+        f"Wiki/_meta/repo_sync/{project_name}.json",
+        "--baseline",
+        "HEAD",
+        "--target-ref",
+        "HEAD",
+        "--accept-baseline",
+    )
+
+
 def command_build(args: argparse.Namespace) -> None:
     repo_path = Path(args.repo).expanduser().resolve()
     if not repo_path.exists():
@@ -196,6 +229,7 @@ def command_build(args: argparse.Namespace) -> None:
 
     run_onboarding_steps(wiki_root, python_path, project_name, args.question)
     command_validate(argparse.Namespace(wiki_root=str(wiki_root), repo=project_name, question=args.question, install_requirements=False))
+    initialize_sync_state(wiki_root, python_path, repo_path, project_name)
     info("Verdict: PASS")
 
 
@@ -215,8 +249,20 @@ def command_validate(args: argparse.Namespace) -> None:
         raise SystemExit("Missing required wiki artifacts:\n" + "\n".join(missing))
 
     if project_name:
+        modules_dir = wiki_root / "Wiki" / "_data" / "modules"
+        matching_modules = []
+        for module_file in modules_dir.glob("*.json"):
+            try:
+                module = json.loads(module_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if module.get("logicalName") == project_name or module.get("sourcePath") == project_name:
+                matching_modules.append(module_file)
+        if not matching_modules:
+            raise SystemExit(f"Missing module artifact for {project_name} under {modules_dir}")
+
         question = args.question or f"What is the main responsibility of {project_name}?"
-        run_wiki_command(
+        code = run_wiki_command(
             wiki_root,
             python_path,
             "scripts.query_runtime.graph_runtime",
@@ -231,6 +277,8 @@ def command_validate(args: argparse.Namespace) -> None:
             "4",
             required=False,
         )
+        if code != 0:
+            raise SystemExit(f"Query smoke failed for {project_name}; see Wiki/_data/query_runs for partial evidence.")
     info("Verdict: PASS")
 
 

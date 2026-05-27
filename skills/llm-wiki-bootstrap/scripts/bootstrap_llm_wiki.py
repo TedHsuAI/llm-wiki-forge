@@ -182,6 +182,7 @@ if __name__ == "__main__":
 GENERATE_MODULE_WIKI = r'''from __future__ import annotations
 
 import argparse
+import collections
 import json
 import re
 from datetime import datetime, timezone
@@ -190,7 +191,14 @@ from pathlib import Path
 from scripts.update_wiki import SKIP_DIRS, build_inventory
 
 
-ENTRY_HINTS = ("Controller", "Service", "Repository", "Repo", "Job", "Handler", "Filter", "Worker", "HostedService", "BackgroundService")
+ENTRY_HINTS = ("Controller", "Service", "Repository", "Repo", "Job", "Handler", "Filter", "Worker", "HostedService", "BackgroundService", "Program", "Startup")
+NOISE_WORDS = {
+    "abstract", "base", "common", "config", "configuration", "constant", "constants", "controller",
+    "data", "default", "dto", "entity", "enum", "exception", "extension", "extensions", "helper",
+    "helpers", "hosted", "interface", "internal", "job", "manager", "model", "models", "option",
+    "options", "program", "provider", "repo", "repository", "request", "response", "service",
+    "settings", "startup", "system", "task", "test", "tests", "type", "utils", "worker",
+}
 
 
 def now_iso() -> str:
@@ -205,7 +213,58 @@ def should_skip(path: Path) -> bool:
     return any(part in SKIP_DIRS for part in path.parts)
 
 
-def scan_csharp(root: Path, limit: int = 400) -> list[dict]:
+def split_words(value: str) -> list[str]:
+    words: list[str] = []
+    for chunk in re.split(r"[^A-Za-z0-9]+", value):
+        if not chunk:
+            continue
+        parts = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", chunk).split()
+        words.extend(part.lower() for part in parts if len(part) >= 3)
+    return [word for word in words if word not in NOISE_WORDS]
+
+
+def classify_entry(path: Path, symbols: list[dict]) -> str:
+    lowered = str(path).lower()
+    names = " ".join(str(symbol.get("name", "")) for symbol in symbols).lower()
+    combined = lowered + " " + names
+    if "controller" in combined:
+        return "api_controller"
+    if "hostedservice" in combined or "backgroundservice" in combined or "worker" in combined:
+        return "background_worker"
+    if "handler" in combined:
+        return "handler"
+    if "repository" in combined or lowered.endswith("repo.cs"):
+        return "repository"
+    if "service" in combined:
+        return "service"
+    if path.name in {"Program.cs", "Startup.cs"}:
+        return "application_bootstrap"
+    return "source_file"
+
+
+def extract_methods(text: str) -> list[dict]:
+    methods = []
+    pattern = re.compile(
+        r"(?:public|private|protected|internal|static|async|virtual|override|sealed|partial|\s)+"
+        r"[\w<>\[\],\s?]+?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        re.MULTILINE,
+    )
+    for match in pattern.finditer(text):
+        name = match.group(1)
+        if name in {"if", "for", "foreach", "while", "switch", "catch", "using", "lock"}:
+            continue
+        methods.append({"name": name})
+    return methods[:40]
+
+
+def extract_routes(text: str) -> list[str]:
+    routes = []
+    for match in re.finditer(r"\[(?:Route|HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch)\s*(?:\(\s*\"([^\"]+)\"\s*\))?", text):
+        routes.append(match.group(1) or match.group(0).strip("[]"))
+    return routes[:20]
+
+
+def scan_csharp(root: Path, limit: int = 800) -> list[dict]:
     entries = []
     if not root.exists():
         return entries
@@ -217,11 +276,56 @@ def scan_csharp(root: Path, limit: int = 400) -> list[dict]:
         symbols = []
         for match in re.finditer(r"\b(class|interface|record|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)", text):
             symbols.append({"kind": match.group(1), "name": match.group(2)})
-        score = sum(1 for hint in ENTRY_HINTS if hint.lower() in path.name.lower())
-        entries.append({"file": str(rel), "symbols": symbols[:20], "entryScore": score})
+        usings = sorted(set(re.findall(r"^\s*using\s+([A-Za-z0-9_.]+)\s*;", text, flags=re.MULTILINE)))[:40]
+        methods = extract_methods(text)
+        routes = extract_routes(text)
+        score = sum(2 for hint in ENTRY_HINTS if hint.lower() in path.name.lower())
+        score += 3 if routes else 0
+        score += 1 if methods else 0
+        kind = classify_entry(rel, symbols)
+        entries.append({
+            "file": str(rel),
+            "symbols": symbols[:30],
+            "methods": methods,
+            "routes": routes,
+            "usings": usings,
+            "entryKind": kind,
+            "entryScore": score,
+        })
         if len(entries) >= limit:
             break
     return entries
+
+
+def summarize_terms(name: str, entries: list[dict]) -> list[str]:
+    counter: collections.Counter[str] = collections.Counter(split_words(name))
+    for entry in entries:
+        counter.update(split_words(entry.get("file", "")))
+        for symbol in entry.get("symbols", []):
+            counter.update(split_words(str(symbol.get("name", ""))))
+        for method in entry.get("methods", []):
+            counter.update(split_words(str(method.get("name", ""))))
+    return [word for word, _ in counter.most_common(30)]
+
+
+def summarize_dependencies(entries: list[dict]) -> list[str]:
+    counter: collections.Counter[str] = collections.Counter()
+    for entry in entries:
+        for using in entry.get("usings", []):
+            if using.startswith(("System", "Microsoft", "Newtonsoft")):
+                continue
+            counter[using] += 1
+    return [name for name, _ in counter.most_common(30)]
+
+
+def symbol_refs(entries: list[dict], limit: int = 40) -> list[str]:
+    refs = []
+    for entry in entries:
+        for symbol in entry.get("symbols", []):
+            refs.append(f"{entry['file']} :: {symbol.get('name')}")
+            if len(refs) >= limit:
+                return refs
+    return refs
 
 
 def render_module(module: dict) -> str:
@@ -232,20 +336,41 @@ def render_module(module: dict) -> str:
         "",
         "## Responsibility",
         "",
-        module["semanticCard"]["owns"][0],
+        *[f"- {item}" for item in module["semanticCard"]["owns"]],
         "",
         "## Boundaries",
         "",
-        "- This bootstrap page is a first-pass summary. Add `not_owns`, business terms, and confused modules during onboarding/backfill.",
+        *[f"- {item}" for item in module["semanticCard"]["not_owns"]],
+        "",
+        "## Business Terms",
+        "",
+        ", ".join(module["semanticCard"]["business_terms"][:30]) or "No terms inferred.",
         "",
         "## Entry Points",
         "",
     ]
     for entry in module["technicalContract"]["entryPoints"][:20]:
-        lines.append(f"- `{entry['file']}`")
+        symbol_names = ", ".join(symbol.get("name", "") for symbol in entry.get("symbols", [])[:5])
+        suffix = f" — {symbol_names}" if symbol_names else ""
+        lines.append(f"- `{entry['file']}` ({entry.get('entryKind', 'source_file')}){suffix}")
     if not module["technicalContract"]["entryPoints"]:
         lines.append("- No C# entry files found yet.")
-    lines.extend(["", "## Next Steps", "", "- Run module onboarding to strengthen semantic card, symbols, communities, and smoke evidence.", ""])
+    lines.extend([
+        "",
+        "## Dependencies",
+        "",
+        *[f"- `{item}`" for item in module["technicalContract"].get("dependencies", [])[:30]],
+        "",
+        "## Extraction Seeds",
+        "",
+        *[f"- `{item}`" for item in module["semanticCard"].get("entry_symbols", [])[:40]],
+        "",
+        "## Confidence And Risk",
+        "",
+        f"- confidence: `{module['confidence']}`",
+        *[f"- {item}" for item in module.get("riskNotes", [])],
+        "",
+    ])
     return "\n".join(lines)
 
 
@@ -269,26 +394,46 @@ def main() -> int:
         source = Path(item["resolvedPath"])
         csharp = scan_csharp(source)
         entry_points = [entry for entry in csharp if entry["entryScore"] > 0] or csharp[:20]
+        business_terms = summarize_terms(name, csharp)
+        dependencies = summarize_dependencies(csharp)
+        entry_symbols = symbol_refs(entry_points)
+        confidence = "static-first-pass" if csharp else "empty-or-non-csharp"
         module = {
             "logicalName": name,
             "sourcePath": item["actualPath"],
             "resolvedPath": item["resolvedPath"],
             "generatedAt": now_iso(),
             "semanticCard": {
-                "owns": [f"{name} source module. This is bootstrap-generated and should be refined during onboarding."],
-                "not_owns": [],
-                "business_terms": [name],
-                "misleading_terms": [],
+                "owns": [
+                    f"{name} owns the source tree at {item['actualPath']}.",
+                    f"Static scan found {len(csharp)} C# files and {len(entry_points)} likely entry files.",
+                ],
+                "not_owns": [
+                    "Generated/vendor/build output excluded by scope filters.",
+                    "Responsibilities not visible in source names require intake or overlay refinement.",
+                ],
+                "business_terms": business_terms or [name],
+                "misleading_terms": ["bootstrap-only", "vendor", "generated"],
                 "confused_modules": [],
-                "entry_symbols": [entry["file"] for entry in entry_points[:20]],
+                "entry_symbols": entry_symbols,
+                "entry_files": [entry["file"] for entry in entry_points[:40]],
+                "fast_path_questions": [
+                    f"What is the main responsibility of {name}?",
+                    f"What are the main entry points of {name}?",
+                ],
             },
             "technicalContract": {
                 "entryPoints": entry_points,
                 "routeSurface": [entry["file"] for entry in entry_points[:20]],
+                "dependencies": dependencies,
                 "projectFiles": item.get("projectFiles", []),
                 "solutionFiles": item.get("solutionFiles", []),
             },
-            "confidence": "bootstrap",
+            "riskNotes": [
+                "This artifact is generated by static source scanning; review intake/overlay facts for business vocabulary.",
+                "Method bodies are not summarized yet; query runtime should extract listed files before broad search.",
+            ],
+            "confidence": confidence,
         }
         module_slug = slug(name)
         (data_modules / f"{module_slug}.json").write_text(json.dumps(module, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -313,6 +458,7 @@ if __name__ == "__main__":
 COMMUNITY_BUILDER = r'''from __future__ import annotations
 
 import argparse
+import collections
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -320,6 +466,25 @@ from pathlib import Path
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def group_entries(entries: list[dict]) -> list[dict]:
+    groups: collections.defaultdict[str, list[dict]] = collections.defaultdict(list)
+    for entry in entries:
+        groups[entry.get("entryKind", "source_file")].append(entry)
+    result = []
+    for kind, items in sorted(groups.items(), key=lambda pair: (-len(pair[1]), pair[0])):
+        result.append({
+            "name": kind,
+            "count": len(items),
+            "files": [item.get("file") for item in items[:15]],
+            "symbols": [
+                f"{item.get('file')} :: {symbol.get('name')}"
+                for item in items[:15]
+                for symbol in item.get("symbols", [])[:3]
+            ][:30],
+        })
+    return result
 
 
 def main() -> int:
@@ -334,13 +499,24 @@ def main() -> int:
     for module_file in (root / "Wiki" / "_data" / "modules").glob("*.json"):
         module = json.loads(module_file.read_text(encoding="utf-8"))
         entries = module.get("technicalContract", {}).get("entryPoints", [])[: args.top_per_module]
+        all_entries = module.get("technicalContract", {}).get("entryPoints", [])
         community = {
             "module": module.get("logicalName"),
             "generatedAt": now_iso(),
-            "source": "module_derived",
+            "source": "static_module_derived",
             "degraded": True,
-            "reason": "Bootstrap fallback community derived from module entry points.",
-            "items": [{"file": entry.get("file"), "kind": "entry_point"} for entry in entries],
+            "reason": "Graph backend is not bundled; community fallback is derived from static module metadata.",
+            "terms": module.get("semanticCard", {}).get("business_terms", [])[:30],
+            "dependencies": module.get("technicalContract", {}).get("dependencies", [])[:30],
+            "clusters": group_entries(all_entries),
+            "items": [
+                {
+                    "file": entry.get("file"),
+                    "kind": entry.get("entryKind", "entry_point"),
+                    "symbols": [symbol.get("name") for symbol in entry.get("symbols", [])[:10]],
+                }
+                for entry in entries
+            ],
         }
         (out / module_file.name).write_text(json.dumps(community, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         count += 1
@@ -363,7 +539,7 @@ from pathlib import Path
 
 
 def now_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def slug(value: str) -> str:
@@ -379,7 +555,31 @@ def score_module(question: str, module: dict) -> int:
     for term in module.get("semanticCard", {}).get("business_terms", []):
         if str(term).lower() in q:
             score += 3
+    for symbol in module.get("semanticCard", {}).get("entry_symbols", []):
+        symbol_l = str(symbol).lower()
+        if any(part and part in q for part in re.split(r"[^a-z0-9]+", symbol_l)):
+            score += 2
+    for entry in module.get("technicalContract", {}).get("entryPoints", []):
+        file_l = str(entry.get("file", "")).lower()
+        if any(part and part in q for part in re.split(r"[^a-z0-9]+", file_l)):
+            score += 1
     return score
+
+
+def direct_evidence(module: dict, limit: int) -> list[dict]:
+    evidence = []
+    for entry in module.get("technicalContract", {}).get("entryPoints", [])[:limit]:
+        symbols = entry.get("symbols", [])
+        methods = entry.get("methods", [])
+        evidence.append({
+            "file": entry.get("file"),
+            "kind": entry.get("entryKind", "source_file"),
+            "symbols": [symbol.get("name") for symbol in symbols[:10]],
+            "methods": [method.get("name") for method in methods[:10]],
+            "routes": entry.get("routes", [])[:10],
+            "source": "static_entry_seed",
+        })
+    return evidence
 
 
 def main() -> int:
@@ -399,23 +599,29 @@ def main() -> int:
         modules.append(module)
     modules.sort(key=lambda item: item["_score"], reverse=True)
     selected = modules[: args.top]
-    direct = []
-    if args.extract and selected:
-        for entry in selected[0].get("technicalContract", {}).get("entryPoints", [])[: args.extract_limit]:
-            direct.append({"file": entry.get("file"), "source": "bootstrap_entry_point"})
+    direct = direct_evidence(selected[0], args.extract_limit) if args.extract and selected else []
     status = "strong" if selected and selected[0]["_score"] > 0 else "partial" if selected else "weak"
     run = {
         "question": args.question,
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "selected_modules": [{"module": m.get("logicalName"), "score": m.get("_score"), "path": m.get("_path")} for m in selected],
+        "rejected_modules": [{"module": m.get("logicalName"), "score": m.get("_score"), "path": m.get("_path")} for m in modules[args.top: args.top + 10]],
         "semantic": {
-            "intake": {"question_type": "bootstrap_smoke"},
-            "routing": {"ambiguity": "low" if status == "strong" else "unknown", "needs_fixed_matrix": False},
+            "intake": {"question_type": "static_smoke", "terms": re.findall(r"[A-Za-z0-9_]+", args.question)[:20]},
+            "routing": {
+                "ambiguity": "low" if status == "strong" else "unknown",
+                "needs_fixed_matrix": False,
+                "score_source": "module name + business terms + entry symbols + route surface",
+            },
             "evidence_sufficiency": {
                 "status": status,
                 "can_answer": bool(direct) or status == "strong",
-                "next_step": "run onboarding/backfill for stronger semantic evidence",
+                "next_step": "review intake/overlay facts or run backfill if implementation evidence is insufficient",
             },
+        },
+        "extraction_plan": {
+            "source": "static_entry_seed" if direct else "module_metadata_only",
+            "fallback_reason": None if direct else "no entry files available for extraction",
         },
         "synthesis_inputs": {"direct_evidence": direct},
     }
