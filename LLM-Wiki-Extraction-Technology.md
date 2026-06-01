@@ -187,10 +187,11 @@ scripts/repo_sync/diff_wiki.py
 
 1. 展開 `${pathVariable}`。
 2. 檢查 repo path 是否存在。
-3. 遞迴尋找 `.cs`、`.csproj`、`.sln`。
-4. 排除 generated/vendor/cache 目錄。
-5. 寫出 `Wiki/_data/scope.inventory.json`。
-6. 寫出 `Wiki/00_Scope_Inventory.md`。
+3. 遞迴尋找 `.cs`、`.csproj`、`.sln`、`.slnf`。
+4. 解析 solution / solution filter 的 active project scope。
+5. 排除 unloaded、solution filter 外、solution 外、generated/vendor/cache 目錄。
+6. 寫出 `Wiki/_data/scope.inventory.json`。
+7. 寫出 `Wiki/00_Scope_Inventory.md`。
 
 預設排除目錄包含：
 
@@ -208,6 +209,32 @@ TestResults
 
 這一層的重點不是理解業務，而是建立「允許掃描哪些來源」與「來源是否存在」的機器事實。
 
+### 5.1 Solution 與卸載專案範圍
+
+Visual Studio 的未載入狀態可能是使用者本機狀態，也可能透過可分享的 `.slnf` solution filter 表示。為了讓提取結果可重複，scanner 採用 deterministic project scope：
+
+1. 若發現 `.slnf`，以 `.slnf` 的 `solution.projects` 作為 active project set。
+2. 若沒有 `.slnf` 但有 `.sln`，以 `.sln` 內的 C# project entries 作為 active project set。
+3. 若 `.sln` 內 project 名稱標示 `unavailable` 或 `unloaded`，該 project 會列入 `excludedProjectFiles`。
+4. 若 repo 內有 `.csproj` 但不在 active project set，該 project 會列入 `excludedProjectFiles`。
+5. 有 solution scope 時，C# 掃描只會進入 active project roots；不在 active project roots 底下的 `.cs` 會被跳過。
+
+inventory 會記錄：
+
+```json
+{
+  "projectScopeSource": "solution_filter | solution | project_discovery",
+  "projectFiles": [],
+  "excludedProjectFiles": [],
+  "missingProjectFiles": [],
+  "solutionFiles": [],
+  "solutionFilterFiles": [],
+  "skippedCsharpFiles": 0
+}
+```
+
+如果團隊希望「已卸載」這件事能被每個人與 CI 重現，建議把 active projects 存成 `.slnf`，不要只依賴 Visual Studio 本機 `.suo` 狀態。
+
 ## 6. Module 與 Symbol 提取
 
 `scripts/generate_module_wiki.py` 是目前最核心的提取腳本。
@@ -222,7 +249,7 @@ TestResults
 *.cs
 ```
 
-排除邏輯沿用 scope inventory 的 skip dirs。每個 C# 檔案會被讀取並提取：
+排除邏輯沿用 scope inventory 的 skip dirs 與 active project scope。當 inventory 來自 `.slnf` 或 `.sln` 時，`generate_module_wiki.py` 只會掃描 `projectFiles` 內 active projects 的 roots，跳過 `excludedProjectFiles` 的程式碼。每個 C# 檔案會被讀取並提取：
 
 | 資料 | 提取方式 |
 | --- | --- |
@@ -232,6 +259,7 @@ TestResults
 | usings | regex 掃描 `using Namespace;` |
 | entry kind | 依路徑與符號名稱分類 |
 | entry score | 依 Controller、Service、Repository、Job、Handler 等提示加權 |
+| project scope | 由 `.slnf` / `.sln` / `.csproj` discovery 決定是否掃描 |
 
 目前這是輕量的 static-first-pass，不會完整解析 C# 語法樹，也不會摘要 method body。因此它穩定、可攜、依賴少，但 method-level 語意仍需要後續 Tree-sitter 或更完整 parser 強化。
 
@@ -290,7 +318,11 @@ Wiki/_data/modules/<module>.json
     "routeSurface": [],
     "dependencies": [],
     "projectFiles": [],
-    "solutionFiles": []
+    "excludedProjectFiles": [],
+    "missingProjectFiles": [],
+    "solutionFiles": [],
+    "solutionFilterFiles": [],
+    "projectScopeSource": "solution_filter | solution | project_discovery"
   },
   "riskNotes": [],
   "confidence": "static-first-pass"

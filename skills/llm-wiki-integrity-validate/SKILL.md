@@ -72,6 +72,7 @@ Inspect target or recent module artifacts for:
 - inline overlay semantics in module Markdown when overlays exist
 - ownership, non-ownership, boundaries, or durable intake/overlay source
 - entry points, route surface, or extraction seeds
+- project scope metadata such as `projectScopeSource`, `projectFiles`, and `excludedProjectFiles` when the source repo uses `.sln` or `.slnf`
 - source paths that point to real repo paths visible in this environment
 - no obvious vendor/cache dominance in module metadata
 

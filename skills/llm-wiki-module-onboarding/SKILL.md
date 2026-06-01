@@ -61,6 +61,7 @@ Collect:
 - `smoke_questions`: at least one responsibility question and preferably one entry-point or implementation question.
 - `known_neighbors`: nearby repos/modules users may confuse with this repo.
 - `high_value_entry_files`: controllers, services, repositories, workers, jobs, handlers, filters, or API endpoints.
+- `solution_filter`: optional `.slnf` file when the Visual Studio solution intentionally unloads or hides projects.
 
 ## Preconditions
 
@@ -137,6 +138,8 @@ If the toolkit exposes a different Python module, use that equivalent. Continue 
 - machine-readable scope inventory exists
 - unrelated existing repo entries were not removed
 - generated/cache directories such as `.git`, `.vs`, `bin`, `obj`, `node_modules`, `packages`, and `TestResults` were not included as source targets
+- if a `.slnf` exists, `projectScopeSource` is `solution_filter` and unloaded projects are listed under `excludedProjectFiles`
+- if no `.slnf` exists but `.sln` files exist, project scanning follows `.sln` project entries instead of every discovered `.csproj`
 
 ### 4. Build Module Artifacts
 
@@ -153,6 +156,7 @@ Continue only after validating:
 - metadata/source paths point to `repo_path`
 - generated content describes this repo, not an unrelated existing repo
 - module semantics include responsibility, boundaries, business terms, entry points, dependencies, risk, and confidence
+- `technicalContract.projectScopeSource`, `projectFiles`, and `excludedProjectFiles` explain which Visual Studio projects were scanned or skipped
 - overlay/intake facts are visible in generated artifacts or clearly reported as a generator gap
 - C# entry files/classes/methods are discoverable as symbol hints or extraction seeds
 

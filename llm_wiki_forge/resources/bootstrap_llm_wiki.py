@@ -57,11 +57,13 @@ UPDATE_WIKI = r'''from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 SKIP_DIRS = {".git", ".vs", "bin", "build", "coverage", "obj", "node_modules", "packages", "TestResults"}
+PROJECT_EXTENSIONS = {".csproj"}
 
 
 def now_iso() -> str:
@@ -86,26 +88,153 @@ def should_skip(path: Path) -> bool:
     return any(part in SKIP_DIRS for part in path.parts)
 
 
-def discover_source(path: Path) -> dict:
-    if not path.exists():
-        return {"exists": False, "projectFiles": [], "solutionFiles": [], "csharpFiles": 0}
-    project_files = []
-    solution_files = []
+def is_under_any(path: Path, roots: list[Path]) -> bool:
+    resolved = path.resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def normalize_project_path(base: Path, raw: str) -> Path:
+    candidate = Path(raw.replace("\\", os.sep))
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    return candidate.resolve()
+
+
+def parse_solution_projects(solution_path: Path) -> tuple[list[Path], list[Path]]:
+    active: list[Path] = []
+    unloaded: list[Path] = []
+    if not solution_path.exists():
+        return active, unloaded
+    text = solution_path.read_text(encoding="utf-8", errors="ignore")
+    pattern = re.compile(r'^Project\("[^"]+"\)\s*=\s*"([^"]+)",\s*"([^"]+\.(?:csproj))",\s*"[^"]+"', re.MULTILINE | re.IGNORECASE)
+    for match in pattern.finditer(text):
+        name = match.group(1)
+        raw_path = match.group(2)
+        project_path = normalize_project_path(solution_path.parent, raw_path)
+        lowered_name = name.lower()
+        if "unavailable" in lowered_name or "unloaded" in lowered_name:
+            unloaded.append(project_path)
+        else:
+            active.append(project_path)
+    return active, unloaded
+
+
+def parse_solution_filter_projects(filter_path: Path) -> tuple[list[Path], str | None]:
+    if not filter_path.exists():
+        return [], None
+    try:
+        data = json.loads(filter_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [], None
+    solution = data.get("solution", {})
+    solution_raw = solution.get("path")
+    solution_path = normalize_project_path(filter_path.parent, solution_raw) if solution_raw else None
+    solution_dir = solution_path.parent if solution_path else filter_path.parent
+    projects: list[Path] = []
+    for raw in solution.get("projects", []):
+        if Path(raw).suffix.lower() not in PROJECT_EXTENSIONS:
+            continue
+        project_path = normalize_project_path(solution_dir, raw)
+        if not project_path.exists():
+            alternate = normalize_project_path(filter_path.parent, raw)
+            if alternate.exists():
+                project_path = alternate
+        projects.append(project_path)
+    return projects, str(solution_path) if solution_path else None
+
+
+def sorted_paths(paths: list[Path]) -> list[str]:
+    return sorted({str(path) for path in paths})
+
+
+def count_csharp_files(path: Path, active_projects: list[Path], enforce_project_scope: bool) -> tuple[int, int]:
+    scan_root = path.parent if path.is_file() else path
+    active_roots = [project.parent for project in active_projects if project.exists()]
     csharp_count = 0
-    for item in path.rglob("*"):
+    skipped_csharp_count = 0
+    if not scan_root.exists():
+        return csharp_count, skipped_csharp_count
+    for item in scan_root.rglob("*.cs"):
         if should_skip(item):
             continue
-        if item.is_file() and item.suffix.lower() == ".cs":
-            csharp_count += 1
-        elif item.is_file() and item.suffix.lower() == ".csproj":
-            project_files.append(str(item))
+        if enforce_project_scope and active_roots and not is_under_any(item, active_roots):
+            skipped_csharp_count += 1
+            continue
+        csharp_count += 1
+    return csharp_count, skipped_csharp_count
+
+
+def discover_source(path: Path) -> dict:
+    if not path.exists():
+        return {
+            "exists": False,
+            "projectFiles": [],
+            "excludedProjectFiles": [],
+            "missingProjectFiles": [],
+            "solutionFiles": [],
+            "solutionFilterFiles": [],
+            "projectScopeSource": "missing",
+            "csharpFiles": 0,
+            "skippedCsharpFiles": 0,
+        }
+    all_project_files: list[Path] = []
+    solution_files: list[Path] = []
+    solution_filter_files: list[Path] = []
+    scan_root = path.parent if path.is_file() else path
+    candidates = [path] if path.is_file() else list(scan_root.rglob("*"))
+    for item in candidates:
+        if should_skip(item):
+            continue
+        if item.is_file() and item.suffix.lower() in PROJECT_EXTENSIONS:
+            all_project_files.append(item.resolve())
         elif item.is_file() and item.suffix.lower() == ".sln":
-            solution_files.append(str(item))
+            solution_files.append(item.resolve())
+        elif item.is_file() and item.suffix.lower() == ".slnf":
+            solution_filter_files.append(item.resolve())
+    active_projects: list[Path] = []
+    excluded_projects: list[Path] = []
+    missing_projects: list[Path] = []
+    project_scope_source = "project_discovery"
+    if solution_filter_files:
+        project_scope_source = "solution_filter"
+        for filter_file in solution_filter_files:
+            projects, solution_path = parse_solution_filter_projects(filter_file)
+            active_projects.extend(projects)
+            if solution_path:
+                solution_files.append(Path(solution_path).resolve())
+        active_set = {str(project) for project in active_projects}
+        excluded_projects.extend([project for project in all_project_files if str(project) not in active_set])
+    elif solution_files:
+        project_scope_source = "solution"
+        for solution_file in solution_files:
+            projects, unloaded = parse_solution_projects(solution_file)
+            active_projects.extend(projects)
+            excluded_projects.extend(unloaded)
+        active_set = {str(project) for project in active_projects}
+        excluded_set = {str(project) for project in excluded_projects}
+        excluded_projects.extend([project for project in all_project_files if str(project) not in active_set and str(project) not in excluded_set])
+    else:
+        active_projects = all_project_files
+    missing_projects = [project for project in active_projects if not project.exists()]
+    active_existing = [project for project in active_projects if project.exists()]
+    enforce_project_scope = project_scope_source in {"solution_filter", "solution"} and bool(active_existing)
+    csharp_count, skipped_csharp_count = count_csharp_files(path, active_existing, enforce_project_scope)
     return {
         "exists": True,
-        "projectFiles": project_files,
-        "solutionFiles": solution_files,
+        "projectFiles": sorted_paths(active_existing),
+        "excludedProjectFiles": sorted_paths(excluded_projects),
+        "missingProjectFiles": sorted_paths(missing_projects),
+        "solutionFiles": sorted_paths(solution_files),
+        "solutionFilterFiles": sorted_paths(solution_filter_files),
+        "projectScopeSource": project_scope_source,
         "csharpFiles": csharp_count,
+        "skippedCsharpFiles": skipped_csharp_count,
     }
 
 
@@ -137,8 +266,13 @@ def build_inventory(root: Path) -> dict:
             "type": target.get("type", "project-root"),
             "exists": probe["exists"],
             "projectFiles": probe["projectFiles"],
+            "excludedProjectFiles": probe["excludedProjectFiles"],
+            "missingProjectFiles": probe["missingProjectFiles"],
             "solutionFiles": probe["solutionFiles"],
+            "solutionFilterFiles": probe["solutionFilterFiles"],
+            "projectScopeSource": probe["projectScopeSource"],
             "csharpFiles": probe["csharpFiles"],
+            "skippedCsharpFiles": probe["skippedCsharpFiles"],
         })
     return {"generatedAt": now_iso(), "items": items}
 
@@ -153,7 +287,11 @@ def render_markdown(inventory: dict) -> str:
             f"- path: `{item['actualPath']}`",
             f"- resolved: `{item['resolvedPath']}`",
             f"- exists: `{item['exists']}`",
+            f"- project scope source: `{item.get('projectScopeSource', 'unknown')}`",
             f"- csharp files: `{item['csharpFiles']}`",
+            f"- skipped csharp files: `{item.get('skippedCsharpFiles', 0)}`",
+            f"- active projects: `{len(item.get('projectFiles', []))}`",
+            f"- excluded projects: `{len(item.get('excludedProjectFiles', []))}`",
             "",
         ])
     return "\n".join(lines) + "\n"
@@ -188,7 +326,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.update_wiki import SKIP_DIRS, build_inventory
+from scripts.update_wiki import SKIP_DIRS, build_inventory, is_under_any
 
 
 ENTRY_HINTS = ("Controller", "Service", "Repository", "Repo", "Job", "Handler", "Filter", "Worker", "HostedService", "BackgroundService", "Program", "Startup")
@@ -264,14 +402,24 @@ def extract_routes(text: str) -> list[str]:
     return routes[:20]
 
 
-def scan_csharp(root: Path, limit: int = 800) -> list[dict]:
+def scan_csharp(
+    root: Path,
+    project_files: list[str] | None = None,
+    project_scope_source: str = "project_discovery",
+    limit: int = 800,
+) -> list[dict]:
     entries = []
     if not root.exists():
         return entries
-    for path in root.rglob("*.cs"):
+    scan_root = root.parent if root.is_file() else root
+    active_roots = [Path(project).resolve().parent for project in project_files or [] if Path(project).exists()]
+    enforce_project_scope = project_scope_source in {"solution_filter", "solution"} and bool(active_roots)
+    for path in scan_root.rglob("*.cs"):
         if should_skip(path):
             continue
-        rel = path.relative_to(root)
+        if enforce_project_scope and not is_under_any(path, active_roots):
+            continue
+        rel = path.relative_to(scan_root)
         text = path.read_text(encoding="utf-8", errors="ignore")
         symbols = []
         for match in re.finditer(r"\b(class|interface|record|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)", text):
@@ -361,6 +509,13 @@ def render_module(module: dict) -> str:
         "",
         *[f"- `{item}`" for item in module["technicalContract"].get("dependencies", [])[:30]],
         "",
+        "## Project Scope",
+        "",
+        f"- source: `{module['technicalContract'].get('projectScopeSource', 'project_discovery')}`",
+        f"- active projects: `{len(module['technicalContract'].get('projectFiles', []))}`",
+        f"- excluded projects: `{len(module['technicalContract'].get('excludedProjectFiles', []))}`",
+        f"- missing active projects: `{len(module['technicalContract'].get('missingProjectFiles', []))}`",
+        "",
         "## Extraction Seeds",
         "",
         *[f"- `{item}`" for item in module["semanticCard"].get("entry_symbols", [])[:40]],
@@ -392,7 +547,7 @@ def main() -> int:
             continue
         name = item["logicalName"]
         source = Path(item["resolvedPath"])
-        csharp = scan_csharp(source)
+        csharp = scan_csharp(source, item.get("projectFiles", []), item.get("projectScopeSource", "project_discovery"))
         entry_points = [entry for entry in csharp if entry["entryScore"] > 0] or csharp[:20]
         business_terms = summarize_terms(name, csharp)
         dependencies = summarize_dependencies(csharp)
@@ -407,9 +562,11 @@ def main() -> int:
                 "owns": [
                     f"{name} owns the source tree at {item['actualPath']}.",
                     f"Static scan found {len(csharp)} C# files and {len(entry_points)} likely entry files.",
+                    f"Project scope source: {item.get('projectScopeSource', 'project_discovery')}.",
                 ],
                 "not_owns": [
                     "Generated/vendor/build output excluded by scope filters.",
+                    f"Excluded project files are not scanned: {len(item.get('excludedProjectFiles', []))}.",
                     "Responsibilities not visible in source names require intake or overlay refinement.",
                 ],
                 "business_terms": business_terms or [name],
@@ -427,7 +584,11 @@ def main() -> int:
                 "routeSurface": [entry["file"] for entry in entry_points[:20]],
                 "dependencies": dependencies,
                 "projectFiles": item.get("projectFiles", []),
+                "excludedProjectFiles": item.get("excludedProjectFiles", []),
+                "missingProjectFiles": item.get("missingProjectFiles", []),
                 "solutionFiles": item.get("solutionFiles", []),
+                "solutionFilterFiles": item.get("solutionFilterFiles", []),
+                "projectScopeSource": item.get("projectScopeSource", "project_discovery"),
             },
             "riskNotes": [
                 "This artifact is generated by static source scanning; review intake/overlay facts for business vocabulary.",

@@ -51,7 +51,9 @@ python -m pip install -e .
 - Git
 - read access to the target repo
 - recommended: `ripgrep` (`rg`)
-- for C# repos: `.sln` / `.csproj` files are preferred when available
+- for C# repos: `.sln` / `.slnf` / `.csproj` files are preferred when available
+
+When a repo contains unloaded or intentionally excluded Visual Studio projects, prefer a shared `.slnf` solution filter. The bootstrap scanner treats `.slnf` projects as the active project set and skips C# files outside those project roots. If no `.slnf` is present, it uses `.sln` project entries as the active solution scope and skips `.csproj` folders that are not part of the solution.
 
 The bootstrap scaffold uses only the Python standard library. If you later connect a richer query runtime, Tree-sitter, Graphify, or LangGraph, install those dependencies in the generated wiki environment.
 
@@ -252,7 +254,9 @@ python -m pip install -e .
 - Git
 - 可讀取目標 repo
 - 建議安裝 `ripgrep` (`rg`)
-- C# repo 建議具備 `.sln` / `.csproj`
+- C# repo 建議具備 `.sln` / `.slnf` / `.csproj`
+
+如果 repo 裡有已卸載或刻意排除的 Visual Studio project，建議提供可分享的 `.slnf` solution filter。Bootstrap scanner 會把 `.slnf` 內列出的 projects 視為 active project set，並跳過不在這些 project roots 底下的 C# 檔案。若沒有 `.slnf`，則使用 `.sln` 內的 project entries 作為解決方案範圍，跳過不屬於 solution 的 `.csproj` 目錄。
 
 Bootstrap 產生的最小環境只使用 Python standard library。若後續接入 Tree-sitter、Graphify、LangGraph 或更完整的 query runtime，再依需求安裝額外套件。
 
