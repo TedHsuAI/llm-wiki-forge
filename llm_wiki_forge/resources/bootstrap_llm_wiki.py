@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Create a portable first-run LLM Wiki scaffold.
 
-The generated scaffold intentionally uses only the Python standard library.
-It is a starter toolkit: teams can replace or extend the scripts later while
-keeping the same wiki.scope.json and Wiki folder contract.
+The generated scaffold keeps a stable wiki.scope.json and Wiki folder contract.
+Graphify is a required generation dependency because module graphs are part of
+the LLM Wiki evidence baseline.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from pathlib import Path
 
 SKIP_DIRS = {
     ".git",
+    ".gradle",
+    ".idea",
     ".vs",
     "bin",
     "build",
@@ -55,14 +57,19 @@ def write_json(path: Path, data: object, overwrite: bool = False) -> bool:
 UPDATE_WIKI = r'''from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-SKIP_DIRS = {".git", ".vs", "bin", "build", "coverage", "obj", "node_modules", "packages", "TestResults"}
+SKIP_DIRS = {".git", ".gradle", ".idea", ".vs", "bin", "build", "coverage", "obj", "node_modules", "packages", "TestResults"}
 PROJECT_EXTENSIONS = {".csproj"}
 
 
@@ -277,6 +284,109 @@ def build_inventory(root: Path) -> dict:
     return {"generatedAt": now_iso(), "items": items}
 
 
+def command_status(name: str, required_for: str, blocked_when_missing: str) -> dict:
+    command = shutil.which(name)
+    return {
+        "Tool": name,
+        "Available": bool(command),
+        "Command": command or "(not found)",
+        "RequiredFor": required_for,
+        "BlockedWhenMissing": blocked_when_missing,
+        "Note": "Resolved from PATH." if command else f"Missing from PATH. Blocks {blocked_when_missing}.",
+    }
+
+
+def command_version(command: str) -> str | None:
+    path = shutil.which(command)
+    if not path:
+        return None
+    try:
+        result = subprocess.run([path, "--version"], text=True, capture_output=True, check=False, timeout=10)
+    except Exception:
+        return None
+    output = (result.stdout or result.stderr).strip().splitlines()
+    return output[0] if output else None
+
+
+def module_status(module: str, distribution: str | None = None) -> dict:
+    available = importlib.util.find_spec(module) is not None
+    version = None
+    if distribution:
+        try:
+            version = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            version = None
+    return {
+        "module": module,
+        "distribution": distribution or module,
+        "available": available,
+        "version": version,
+    }
+
+
+def build_tooling_status() -> dict:
+    tools = [
+        command_status(
+            "graphify",
+            "scope-locked graph extraction; architecture evidence extraction",
+            "graph extraction and graph-backed evidence stages",
+        ),
+        command_status(
+            "repomix",
+            "repo/source bundling; focused source packing",
+            "repomix-based source bundling",
+        ),
+        command_status(
+            "dotnet",
+            "dotnet project inspection; solution and project metadata discovery",
+            "dotnet project inspection and build-assisted discovery",
+        ),
+        command_status(
+            "node",
+            "deck/report helper scripts and JavaScript tooling",
+            "JavaScript helper scripts",
+        ),
+        command_status(
+            "npm",
+            "JavaScript tooling installation and helper scripts",
+            "npm-based helper tooling",
+        ),
+    ]
+    return {
+        "generatedAt": now_iso(),
+        "tools": tools,
+        "missingTools": [tool["Tool"] for tool in tools if not tool["Available"]],
+    }
+
+
+def build_query_runtime_status() -> dict:
+    modules = [
+        module_status("graphify", "graphifyy"),
+        module_status("langgraph"),
+        module_status("tree_sitter", "tree-sitter"),
+        module_status("tree_sitter_c_sharp", "tree-sitter-c-sharp"),
+        module_status("tree_sitter_kotlin", "tree-sitter-kotlin"),
+        module_status("tree_sitter_java", "tree-sitter-java"),
+        module_status("graphrag"),
+    ]
+    return {
+        "generated_at": now_iso(),
+        "python": sys.version.split()[0],
+        "executables": {
+            "python": sys.executable,
+            "node": command_version("node"),
+            "npm": command_version("npm"),
+        },
+        "modules": modules,
+        "missing_required_modules": [
+            item["module"]
+            for item in modules
+            if item["module"] in {"graphify", "langgraph", "tree_sitter", "tree_sitter_c_sharp"} and not item["available"]
+        ],
+        "optional_modules": ["tree_sitter_kotlin", "tree_sitter_java", "graphrag"],
+    }
+
+
 def render_markdown(inventory: dict) -> str:
     lines = ["# Scope Inventory", "", f"Generated: {inventory['generatedAt']}", ""]
     for item in inventory["items"]:
@@ -306,7 +416,8 @@ def main() -> int:
     (root / "Wiki" / "_data").mkdir(parents=True, exist_ok=True)
     (root / "Wiki" / "_data" / "scope.inventory.json").write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (root / "Wiki" / "00_Scope_Inventory.md").write_text(render_markdown(inventory), encoding="utf-8", newline="\n")
-    (root / "Wiki" / "_data" / "tooling.status.json").write_text(json.dumps({"generatedAt": now_iso(), "status": "bootstrap-minimal"}, indent=2) + "\n", encoding="utf-8")
+    (root / "Wiki" / "_data" / "tooling.status.json").write_text(json.dumps(build_tooling_status(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (root / "Wiki" / "_data" / "query_runtime.status.json").write_text(json.dumps(build_query_runtime_status(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (root / "Wiki" / "00_System_Index.md").write_text("# System Index\n\nBootstrap scaffold. Run generate_module_wiki next.\n", encoding="utf-8", newline="\n")
     print(f"scope inventory items: {len(inventory['items'])}")
     return 0
@@ -322,20 +433,93 @@ GENERATE_MODULE_WIKI = r'''from __future__ import annotations
 import argparse
 import collections
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from scripts.update_wiki import SKIP_DIRS, build_inventory, is_under_any
+from scripts.update_wiki import build_inventory, is_under_any
 
 
-ENTRY_HINTS = ("Controller", "Service", "Repository", "Repo", "Job", "Handler", "Filter", "Worker", "HostedService", "BackgroundService", "Program", "Startup")
+CODE_EXTENSIONS = {".cs", ".kt", ".kts", ".java"}
+ANDROID_BUILD_FILES = {"settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"}
+SKIP_PARTS = {
+    ".git",
+    ".gradle",
+    ".idea",
+    ".vs",
+    "bin",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "obj",
+    "packages",
+    "testresults",
+}
+ENTRY_HINTS = (
+    "Activity",
+    "Application",
+    "Controller",
+    "Fragment",
+    "Handler",
+    "Job",
+    "Repository",
+    "Service",
+    "Startup",
+    "ViewModel",
+    "Worker",
+)
 NOISE_WORDS = {
-    "abstract", "base", "common", "config", "configuration", "constant", "constants", "controller",
-    "data", "default", "dto", "entity", "enum", "exception", "extension", "extensions", "helper",
-    "helpers", "hosted", "interface", "internal", "job", "manager", "model", "models", "option",
-    "options", "program", "provider", "repo", "repository", "request", "response", "service",
-    "settings", "startup", "system", "task", "test", "tests", "type", "utils", "worker",
+    "abstract",
+    "activity",
+    "android",
+    "base",
+    "common",
+    "config",
+    "configuration",
+    "constant",
+    "constants",
+    "controller",
+    "data",
+    "default",
+    "dto",
+    "entity",
+    "enum",
+    "exception",
+    "extension",
+    "extensions",
+    "fragment",
+    "helper",
+    "helpers",
+    "interface",
+    "internal",
+    "java",
+    "job",
+    "kotlin",
+    "manager",
+    "model",
+    "models",
+    "option",
+    "options",
+    "program",
+    "provider",
+    "repo",
+    "repository",
+    "request",
+    "response",
+    "service",
+    "settings",
+    "startup",
+    "system",
+    "task",
+    "test",
+    "tests",
+    "type",
+    "utils",
+    "viewmodel",
+    "worker",
 }
 
 
@@ -344,11 +528,55 @@ def now_iso() -> str:
 
 
 def slug(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-") or "module"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-").lower() or "module"
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_scope(root: Path) -> dict[str, Any]:
+    scope_path = root / "wiki.scope.json"
+    if not scope_path.exists():
+        return {}
+    return load_json(scope_path)
+
+
+def resolve_metadata_path(wiki_root: Path, scope: dict[str, Any], raw_path: str) -> Path:
+    expanded = str(raw_path)
+    for key, value in (scope.get("pathVariables") or {}).items():
+        token = "${" + str(key) + "}"
+        if token in expanded:
+            expanded = expanded.replace(token, str(resolve_metadata_path(wiki_root, scope, str(value))))
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = wiki_root / path
+    return path.resolve()
+
+
+def metadata_child(raw_root: str, relative: Path) -> str:
+    base = str(raw_root).replace("\\", "/").rstrip("/")
+    rel = relative.as_posix()
+    return f"{base}/{rel}" if rel else base
+
+
+def metadata_text(path: Path, wiki_root: Path, scope: dict[str, Any]) -> str:
+    resolved = path.resolve()
+    for key, value in sorted((scope.get("pathVariables") or {}).items()):
+        variable_root = resolve_metadata_path(wiki_root, scope, str(value)).resolve()
+        if resolved == variable_root or variable_root in resolved.parents:
+            relative = os.path.relpath(resolved, variable_root).replace("\\", "/")
+            return "${" + str(key) + "}" if relative == "." else "${" + str(key) + "}/" + relative
+    return os.path.relpath(resolved, wiki_root).replace("\\", "/")
 
 
 def should_skip(path: Path) -> bool:
-    return any(part in SKIP_DIRS for part in path.parts)
+    return any(part.lower() in SKIP_PARTS for part in path.parts)
 
 
 def split_words(value: str) -> list[str]:
@@ -361,251 +589,503 @@ def split_words(value: str) -> list[str]:
     return [word for word in words if word not in NOISE_WORDS]
 
 
-def classify_entry(path: Path, symbols: list[dict]) -> str:
-    lowered = str(path).lower()
-    names = " ".join(str(symbol.get("name", "")) for symbol in symbols).lower()
-    combined = lowered + " " + names
-    if "controller" in combined:
+def platform_markers(source: Path) -> dict[str, bool]:
+    if not source.exists():
+        return {
+            "hasAndroidBuildFile": False,
+            "hasAndroidManifest": False,
+            "hasCsharpProject": False,
+        }
+    scan_root = source.parent if source.is_file() else source
+    return {
+        "hasAndroidBuildFile": any((scan_root / name).exists() for name in ANDROID_BUILD_FILES),
+        "hasAndroidManifest": any(scan_root.rglob("AndroidManifest.xml")),
+        "hasCsharpProject": any(scan_root.rglob("*.csproj")),
+    }
+
+
+def detect_platform(source: Path) -> str:
+    if not source.exists():
+        return "unknown"
+    scan_root = source.parent if source.is_file() else source
+    markers = platform_markers(source)
+    has_android_build = markers["hasAndroidBuildFile"]
+    has_android_manifest = markers["hasAndroidManifest"]
+    has_csharp_project = markers["hasCsharpProject"]
+    if (has_android_build or has_android_manifest) and has_csharp_project:
+        return "mixed"
+    if has_android_build:
+        return "android"
+    if has_android_manifest:
+        return "android"
+    if has_csharp_project:
+        return "csharp"
+    if any(scan_root.rglob("*.kt")) or any(scan_root.rglob("*.java")):
+        return "android"
+    return "unknown"
+
+
+def platform_detection(source: Path) -> dict[str, Any]:
+    if not source.exists():
+        return {
+            "hasAndroidBuildFile": False,
+            "hasAndroidManifest": False,
+            "hasCsharpProject": False,
+            "guard": "missing_source",
+        }
+    markers = platform_markers(source)
+    has_android_build = markers["hasAndroidBuildFile"]
+    has_android_manifest = markers["hasAndroidManifest"]
+    has_csharp_project = markers["hasCsharpProject"]
+    guard = "mixed_android_csharp_blocked" if (has_android_build or has_android_manifest) and has_csharp_project else "none"
+    return {
+        **markers,
+        "guard": guard,
+    }
+
+
+def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
+    source = Path(item["resolvedPath"])
+    if not source.exists():
+        return []
+    scan_root = source.parent if source.is_file() else source
+    if platform == "csharp":
+        active_roots = [Path(project).resolve().parent for project in item.get("projectFiles") or [] if Path(project).exists()]
+        enforce_scope = item.get("projectScopeSource") in {"solution_filter", "solution"} and bool(active_roots)
+        files = []
+        for path in scan_root.rglob("*.cs"):
+            if should_skip(path):
+                continue
+            if enforce_scope and not is_under_any(path, active_roots):
+                continue
+            files.append(path.resolve())
+        return sorted(files)
+
+    if platform != "android":
+        return []
+
+    extensions = {".kt", ".kts", ".java"}
+    files = []
+    for path in scan_root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in extensions or should_skip(path):
+            continue
+        lowered = path.as_posix().lower()
+        if "/src/test/" in lowered or "/src/androidtest/" in lowered:
+            continue
+        files.append(path.resolve())
+    return sorted(files)
+
+
+def extract_symbols(text: str, suffix: str) -> list[dict[str, str]]:
+    symbols: list[dict[str, str]] = []
+    if suffix == ".cs":
+        pattern = r"\b(class|interface|record|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    elif suffix in {".kt", ".kts"}:
+        pattern = r"\b(class|interface|object|enum\s+class|fun)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    else:
+        pattern = r"\b(class|interface|record|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    for match in re.finditer(pattern, text):
+        kind = match.group(1).replace(" ", "_")
+        symbols.append({"kind": kind, "name": match.group(2)})
+        if len(symbols) >= 40:
+            break
+    return symbols
+
+
+def extract_methods(text: str, suffix: str) -> list[str]:
+    if suffix in {".kt", ".kts"}:
+        names = re.findall(r"\bfun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
+    elif suffix == ".java":
+        names = re.findall(r"\b(?:public|private|protected|static|final|\s)+[\w<>\[\],\s?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
+    else:
+        names = re.findall(
+            r"(?:public|private|protected|internal|static|async|virtual|override|sealed|partial|\s)+"
+            r"[\w<>\[\],\s?]+?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            text,
+        )
+    blocked = {"if", "for", "foreach", "while", "switch", "catch", "using", "lock"}
+    return [name for name in names if name not in blocked][:80]
+
+
+def extract_csharp_routes(text: str) -> list[str]:
+    routes = []
+    for match in re.finditer(r"\[(?:Route|HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch)\s*(?:\(\s*\"([^\"]+)\"\s*\))?", text):
+        routes.append(match.group(1) or match.group(0).strip("[]"))
+    return routes[:40]
+
+
+def extract_retrofit_surface(text: str) -> list[str]:
+    surface = []
+    for match in re.finditer(r"@(GET|POST|PUT|DELETE|PATCH)\s*\(\s*\"([^\"]+)\"", text):
+        surface.append(f"{match.group(1)} {match.group(2)}")
+    return surface[:40]
+
+
+def classify_entry(path: Path, text: str, symbols: list[dict[str, str]], platform: str) -> str:
+    haystack = f"{path.as_posix()} {' '.join(symbol.get('name', '') for symbol in symbols)}".lower()
+    if platform == "android":
+        if "@composable" in text.lower():
+            return "compose_ui"
+        if "retrofit2.http" in text or re.search(r"@(GET|POST|PUT|DELETE|PATCH)\s*\(", text):
+            return "retrofit_api"
+        if "viewmodel" in haystack:
+            return "view_model"
+        if "repository" in haystack:
+            return "repository"
+        if "activity" in haystack:
+            return "activity"
+        if "fragment" in haystack:
+            return "fragment"
+        if "module" in haystack and ("koin" in text.lower() or "dagger" in text.lower() or "hilt" in text.lower()):
+            return "di_registration"
+    if "controller" in haystack:
         return "api_controller"
-    if "hostedservice" in combined or "backgroundservice" in combined or "worker" in combined:
+    if "hostedservice" in haystack or "backgroundservice" in haystack or "worker" in haystack:
         return "background_worker"
-    if "handler" in combined:
+    if "handler" in haystack:
         return "handler"
-    if "repository" in combined or lowered.endswith("repo.cs"):
+    if "repository" in haystack:
         return "repository"
-    if "service" in combined:
+    if "service" in haystack:
         return "service"
     if path.name in {"Program.cs", "Startup.cs"}:
         return "application_bootstrap"
     return "source_file"
 
 
-def extract_methods(text: str) -> list[dict]:
-    methods = []
-    pattern = re.compile(
-        r"(?:public|private|protected|internal|static|async|virtual|override|sealed|partial|\s)+"
-        r"[\w<>\[\],\s?]+?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-        re.MULTILINE,
-    )
-    for match in pattern.finditer(text):
-        name = match.group(1)
-        if name in {"if", "for", "foreach", "while", "switch", "catch", "using", "lock"}:
-            continue
-        methods.append({"name": name})
-    return methods[:40]
-
-
-def extract_routes(text: str) -> list[str]:
-    routes = []
-    for match in re.finditer(r"\[(?:Route|HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch)\s*(?:\(\s*\"([^\"]+)\"\s*\))?", text):
-        routes.append(match.group(1) or match.group(0).strip("[]"))
-    return routes[:20]
-
-
-def scan_csharp(
-    root: Path,
-    project_files: list[str] | None = None,
-    project_scope_source: str = "project_discovery",
-    limit: int = 800,
-) -> list[dict]:
-    entries = []
-    if not root.exists():
-        return entries
-    scan_root = root.parent if root.is_file() else root
-    active_roots = [Path(project).resolve().parent for project in project_files or [] if Path(project).exists()]
-    enforce_project_scope = project_scope_source in {"solution_filter", "solution"} and bool(active_roots)
-    for path in scan_root.rglob("*.cs"):
-        if should_skip(path):
-            continue
-        if enforce_project_scope and not is_under_any(path, active_roots):
-            continue
+def scan_sources(item: dict[str, Any], platform: str, files: list[Path]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    source = Path(item["resolvedPath"])
+    scan_root = source.parent if source.is_file() else source
+    entries: list[dict[str, Any]] = []
+    symbols: list[dict[str, Any]] = []
+    raw_root = str(item["actualPath"])
+    for path in files:
         rel = path.relative_to(scan_root)
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        symbols = []
-        for match in re.finditer(r"\b(class|interface|record|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)", text):
-            symbols.append({"kind": match.group(1), "name": match.group(2)})
-        usings = sorted(set(re.findall(r"^\s*using\s+([A-Za-z0-9_.]+)\s*;", text, flags=re.MULTILINE)))[:40]
-        methods = extract_methods(text)
-        routes = extract_routes(text)
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        file_symbols = extract_symbols(text, path.suffix.lower())
+        methods = extract_methods(text, path.suffix.lower())
+        entry_kind = classify_entry(rel, text, file_symbols, platform)
+        routes = extract_csharp_routes(text) if platform == "csharp" else extract_retrofit_surface(text)
         score = sum(2 for hint in ENTRY_HINTS if hint.lower() in path.name.lower())
-        score += 3 if routes else 0
+        score += 4 if routes else 0
+        score += 3 if entry_kind != "source_file" else 0
         score += 1 if methods else 0
-        kind = classify_entry(rel, symbols)
-        entries.append({
-            "file": str(rel),
-            "symbols": symbols[:30],
-            "methods": methods,
-            "routes": routes,
-            "usings": usings,
-            "entryKind": kind,
+        source_path = metadata_child(raw_root, rel)
+        entry = {
+            "file": source_path,
+            "relative_file": rel.as_posix(),
+            "kind": entry_kind,
+            "entryKind": entry_kind,
             "entryScore": score,
-        })
-        if len(entries) >= limit:
-            break
-    return entries
+            "symbols": file_symbols[:30],
+            "methods": [{"name": name} for name in methods[:40]],
+            "routes": routes,
+            "route_surface": routes,
+        }
+        entries.append(entry)
+        for symbol in file_symbols:
+            name = symbol.get("name") or Path(source_path).stem
+            symbols.append(
+                {
+                    "id": f"{slug(item['logicalName'])}.{name}",
+                    "name": name,
+                    "kind": symbol.get("kind") or "symbol",
+                    "solution_group": item.get("repo") or item.get("logicalName"),
+                    "module": item["logicalName"],
+                    "project": item["logicalName"],
+                    "source_paths": [source_path],
+                    "business_context": " ".join(split_words(source_path)),
+                    "skill_description": entry_kind,
+                    "technical_contract": {
+                        "route_surface": routes,
+                        "public_methods": methods[:40],
+                    },
+                }
+            )
+    entries.sort(key=lambda entry: int(entry.get("entryScore") or 0), reverse=True)
+    return entries, symbols
 
 
-def summarize_terms(name: str, entries: list[dict]) -> list[str]:
+def summarize_terms(name: str, entries: list[dict[str, Any]]) -> list[str]:
     counter: collections.Counter[str] = collections.Counter(split_words(name))
     for entry in entries:
-        counter.update(split_words(entry.get("file", "")))
-        for symbol in entry.get("symbols", []):
-            counter.update(split_words(str(symbol.get("name", ""))))
-        for method in entry.get("methods", []):
-            counter.update(split_words(str(method.get("name", ""))))
-    return [word for word, _ in counter.most_common(30)]
+        counter.update(split_words(str(entry.get("file") or "")))
+        counter.update(split_words(str(entry.get("kind") or "")))
+        for symbol in entry.get("symbols") or []:
+            counter.update(split_words(str(symbol.get("name") or "")))
+        for method in entry.get("methods") or []:
+            counter.update(split_words(str(method.get("name") or "")))
+    return [word for word, _ in counter.most_common(40)]
 
 
-def summarize_dependencies(entries: list[dict]) -> list[str]:
-    counter: collections.Counter[str] = collections.Counter()
-    for entry in entries:
-        for using in entry.get("usings", []):
-            if using.startswith(("System", "Microsoft", "Newtonsoft")):
-                continue
-            counter[using] += 1
-    return [name for name, _ in counter.most_common(30)]
+def discover_android_surfaces(source: Path) -> dict[str, Any]:
+    scan_root = source.parent if source.is_file() else source
+    gradle_files = [
+        str(path.relative_to(scan_root)).replace("\\", "/")
+        for name in ANDROID_BUILD_FILES
+        for path in scan_root.rglob(name)
+        if not should_skip(path)
+    ][:80]
+    manifests = []
+    manifest_components: list[str] = []
+    for manifest in scan_root.rglob("AndroidManifest.xml"):
+        if should_skip(manifest):
+            continue
+        rel = str(manifest.relative_to(scan_root)).replace("\\", "/")
+        manifests.append(rel)
+        text = manifest.read_text(encoding="utf-8-sig", errors="replace")
+        for tag in ("activity", "service", "receiver", "provider", "application"):
+            for match in re.finditer(rf"<{tag}\b[^>]*android:name=\"([^\"]+)\"", text):
+                manifest_components.append(f"{tag}:{match.group(1)}")
+    return {
+        "gradle_modules": gradle_files,
+        "manifest_components": manifest_components[:120],
+        "manifest_files": manifests[:40],
+    }
 
 
-def symbol_refs(entries: list[dict], limit: int = 40) -> list[str]:
-    refs = []
-    for entry in entries:
-        for symbol in entry.get("symbols", []):
-            refs.append(f"{entry['file']} :: {symbol.get('name')}")
-            if len(refs) >= limit:
-                return refs
-    return refs
+def graphify_workspace(wiki_root: Path, scope: dict[str, Any]) -> Path:
+    tooling = ((scope.get("tooling") or {}).get("graphify") or {})
+    raw = tooling.get("workspaceSubdir") or "Wiki/_data/graphify-work"
+    return resolve_metadata_path(wiki_root, scope, str(raw))
 
 
-def render_module(module: dict) -> str:
+def run_graphify_shard(
+    wiki_root: Path,
+    scope: dict[str, Any],
+    module_id: str,
+    source_root: Path,
+    files: list[Path],
+) -> dict[str, Any]:
+    shard_root = graphify_workspace(wiki_root, scope) / "shards" / module_id
+    graph_out = shard_root / "graphify-out"
+    graph_json = graph_out / "graph.json"
+    report_path = graph_out / "GRAPH_REPORT.md"
+    try:
+        from graphify.analyze import god_nodes, surprising_connections, suggest_questions
+        from graphify.build import build_from_json
+        from graphify.cluster import cluster, score_all
+        from graphify.export import to_json
+        from graphify.extract import extract
+        from graphify.report import generate
+    except Exception as exc:
+        raise RuntimeError(
+            "Graphify is required for LLM Wiki generation. "
+            "Install the PyPI package `graphifyy>=0.4.10,<0.9`, which provides the `graphify` module."
+        ) from exc
+
+    try:
+        graph_out.mkdir(parents=True, exist_ok=True)
+        extraction = extract(files)
+        graph = build_from_json(extraction)
+        communities = cluster(graph)
+        scores = score_all(graph, communities)
+        labels = {community_id: f"community-{community_id}" for community_id in communities}
+        to_json(graph, communities, str(graph_json))
+        report = generate(
+            graph,
+            communities,
+            scores,
+            labels,
+            god_nodes(graph),
+            surprising_connections(graph, communities),
+            {"total_files": len(files), "total_words": 0},
+            {"input": extraction.get("input_tokens", 0), "output": extraction.get("output_tokens", 0)},
+            str(source_root),
+            suggest_questions(graph, communities, labels),
+        )
+        report_path.write_text(report, encoding="utf-8")
+        return {
+            "status": "enabled",
+            "strategy": "shard",
+            "mode": "python-api-ast",
+            "corpus_path": metadata_text(source_root, wiki_root, scope),
+            "shard_path": metadata_text(shard_root, wiki_root, scope),
+            "graph_json_path": metadata_text(graph_json, wiki_root, scope),
+            "report_path": metadata_text(report_path, wiki_root, scope),
+            "total_files": len(files),
+            "code_files": len(files),
+            "non_code_files": 0,
+            "module_nodes": graph.number_of_nodes(),
+            "graph_edges": graph.number_of_edges(),
+            "communities": len(communities),
+            "cross_edges": 0,
+            "god_nodes": god_nodes(graph),
+            "note": "Graphify shard generated from scoped source files.",
+        }
+    except Exception as exc:
+        raise RuntimeError(f"Graphify failed while generating shard `{module_id}`: {exc}") from exc
+
+
+def build_module(
+    wiki_root: Path,
+    scope: dict[str, Any],
+    item: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    name = str(item["logicalName"])
+    module_id = slug(name)
+    source = Path(item["resolvedPath"])
+    platform = detect_platform(source)
+    detection = platform_detection(source)
+    files = source_files_for_item(item, platform)
+    entries, symbols = scan_sources(item, platform, files)
+    entry_points = [entry for entry in entries if int(entry.get("entryScore") or 0) > 0] or entries[:25]
+    terms = summarize_terms(name, entries)
+    android = discover_android_surfaces(source) if platform == "android" and source.exists() else {}
+    guard_note = (
+        "Mixed Android and C# project markers were found under this target; source scanning was blocked. "
+        "Split wiki.scope.json targets to the Android and C# project roots before generating module evidence."
+    )
+    graphify = run_graphify_shard(wiki_root, scope, module_id, source.parent if source.is_file() else source, files) if files else {
+        "status": "blocked" if platform == "mixed" else "empty",
+        "strategy": "shard",
+        "mode": "python-api-ast",
+        "graph_json_path": None,
+        "report_path": None,
+        "module_nodes": 0,
+        "graph_edges": 0,
+        "communities": 0,
+        "note": guard_note if platform == "mixed" else "No scoped code files were available for Graphify.",
+    }
+    technical_contract = {
+        "entry_points": entry_points,
+        "entryPoints": entry_points,
+        "route_surface": [route for entry in entry_points for route in (entry.get("route_surface") or [])][:80],
+        "routeSurface": [entry["file"] for entry in entry_points[:40]],
+        "dependencies": [],
+        "projectFiles": item.get("projectFiles", []),
+        "excludedProjectFiles": item.get("excludedProjectFiles", []),
+        "missingProjectFiles": item.get("missingProjectFiles", []),
+        "solutionFiles": item.get("solutionFiles", []),
+        "solutionFilterFiles": item.get("solutionFilterFiles", []),
+        "projectScopeSource": item.get("projectScopeSource", "project_discovery"),
+        "platformDetection": detection,
+        "graphify": graphify,
+        **android,
+    }
+    module = {
+        "id": module_id,
+        "name": name,
+        "logicalName": name,
+        "kind": "android-app" if platform == "android" else "csharp-module" if platform == "csharp" else "mixed-source" if platform == "mixed" else "source-module",
+        "platform": platform,
+        "solution_group": item.get("repo") or name,
+        "project": name,
+        "source_paths": [str(item["actualPath"])],
+        "sourcePath": item["actualPath"],
+        "resolvedPath": item["resolvedPath"],
+        "generated_at": now_iso(),
+        "generatedAt": now_iso(),
+        "business_context": {
+            "summary": f"{name} source extraction seed generated from {platform} static discovery.",
+            "terms": terms or [name],
+        },
+        "business_tags": terms[:20],
+        "skill_description": "Static module seed with Graphify community navigation metadata.",
+        "graphify": graphify,
+        "tooling": {
+            "generator": "llm_wiki_forge.resources.scripts.generate_module_wiki",
+            "platform": platform,
+        },
+        "technical_contract": technical_contract,
+        "technicalContract": technical_contract,
+        "impact_analysis": {
+            "entry_file_count": len(entry_points),
+            "source_file_count": len(files),
+        },
+        "dependencies": [],
+        "callers": [],
+        "callees": [],
+        "exceptions": [],
+        "risk_notes": [
+            "Generated by static discovery; business semantics should be refined by overlays or reviewed wiki notes.",
+            "No method-level full call graph is claimed; query runtime must use direct source evidence for detailed answers.",
+        ] + ([guard_note] if platform == "mixed" else []),
+        "riskNotes": [
+            "Generated by static discovery; business semantics should be refined by overlays or reviewed wiki notes.",
+            "No method-level full call graph is claimed; query runtime must use direct source evidence for detailed answers.",
+        ] + ([guard_note] if platform == "mixed" else []),
+        "confidence": {
+            "level": "medium" if files else "low",
+            "source": "static-discovery+graphify" if graphify.get("status") == "enabled" else "static-discovery",
+        },
+        "semanticCard": {
+            "business_terms": terms or [name],
+            "entry_symbols": [f"{entry['file']} :: {symbol.get('name')}" for entry in entry_points for symbol in entry.get("symbols", [])][:80],
+            "entry_files": [entry["file"] for entry in entry_points[:80]],
+        },
+    }
+    return module, symbols
+
+
+def render_module(module: dict[str, Any]) -> str:
+    graphify = module.get("graphify") or {}
+    contract = module.get("technical_contract") or {}
     lines = [
-        f"# {module['logicalName']}",
+        f"# {module['name']}",
         "",
-        f"Source path: `{module['sourcePath']}`",
+        f"Platform: `{module.get('platform')}`",
+        f"Source path: `{module.get('sourcePath')}`",
         "",
-        "## Responsibility",
+        "## Graphify",
         "",
-        *[f"- {item}" for item in module["semanticCard"]["owns"]],
-        "",
-        "## Boundaries",
-        "",
-        *[f"- {item}" for item in module["semanticCard"]["not_owns"]],
-        "",
-        "## Business Terms",
-        "",
-        ", ".join(module["semanticCard"]["business_terms"][:30]) or "No terms inferred.",
+        f"- status: `{graphify.get('status')}`",
+        f"- strategy: `{graphify.get('strategy')}`",
+        f"- mode: `{graphify.get('mode')}`",
+        f"- nodes: `{graphify.get('module_nodes', 0)}`",
+        f"- edges: `{graphify.get('graph_edges', 0)}`",
+        f"- communities: `{graphify.get('communities', 0)}`",
         "",
         "## Entry Points",
         "",
     ]
-    for entry in module["technicalContract"]["entryPoints"][:20]:
-        symbol_names = ", ".join(symbol.get("name", "") for symbol in entry.get("symbols", [])[:5])
-        suffix = f" — {symbol_names}" if symbol_names else ""
-        lines.append(f"- `{entry['file']}` ({entry.get('entryKind', 'source_file')}){suffix}")
-    if not module["technicalContract"]["entryPoints"]:
-        lines.append("- No C# entry files found yet.")
-    lines.extend([
-        "",
-        "## Dependencies",
-        "",
-        *[f"- `{item}`" for item in module["technicalContract"].get("dependencies", [])[:30]],
-        "",
-        "## Project Scope",
-        "",
-        f"- source: `{module['technicalContract'].get('projectScopeSource', 'project_discovery')}`",
-        f"- active projects: `{len(module['technicalContract'].get('projectFiles', []))}`",
-        f"- excluded projects: `{len(module['technicalContract'].get('excludedProjectFiles', []))}`",
-        f"- missing active projects: `{len(module['technicalContract'].get('missingProjectFiles', []))}`",
-        "",
-        "## Extraction Seeds",
-        "",
-        *[f"- `{item}`" for item in module["semanticCard"].get("entry_symbols", [])[:40]],
-        "",
-        "## Confidence And Risk",
-        "",
-        f"- confidence: `{module['confidence']}`",
-        *[f"- {item}" for item in module.get("riskNotes", [])],
-        "",
-    ])
-    return "\n".join(lines)
+    for entry in contract.get("entry_points", [])[:40]:
+        names = ", ".join(symbol.get("name", "") for symbol in entry.get("symbols", [])[:5])
+        suffix = f" - {names}" if names else ""
+        lines.append(f"- `{entry.get('file')}` ({entry.get('kind')}){suffix}")
+    if not contract.get("entry_points"):
+        lines.append("- No entry points found.")
+    lines.extend(["", "## Risk Notes", ""])
+    lines.extend(f"- {note}" for note in module.get("risk_notes") or [])
+    return "\n".join(lines) + "\n"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Generate LLM Wiki module and symbol data")
     parser.add_argument("--wiki-root", default=".")
-    args = parser.parse_args()
-    root = Path(args.wiki_root).resolve()
-    inventory = build_inventory(root)
-    data_modules = root / "Wiki" / "_data" / "modules"
-    data_symbols = root / "Wiki" / "_data" / "symbols"
-    modules_md = root / "Wiki" / "01_Modules"
-    symbols_md = root / "Wiki" / "02_Symbols"
+    args = parser.parse_args(argv)
+    wiki_root = Path(args.wiki_root).resolve()
+    scope = load_scope(wiki_root)
+    inventory = build_inventory(wiki_root)
+    data_modules = wiki_root / "Wiki" / "_data" / "modules"
+    data_symbols = wiki_root / "Wiki" / "_data" / "symbols"
+    modules_md = wiki_root / "Wiki" / "01_Modules"
+    symbols_md = wiki_root / "Wiki" / "02_Symbols"
     for folder in (data_modules, data_symbols, modules_md, symbols_md):
         folder.mkdir(parents=True, exist_ok=True)
+
     built = 0
-    for item in inventory["items"]:
+    for item in inventory.get("items") or []:
         if not item.get("exists"):
             continue
-        name = item["logicalName"]
-        source = Path(item["resolvedPath"])
-        csharp = scan_csharp(source, item.get("projectFiles", []), item.get("projectScopeSource", "project_discovery"))
-        entry_points = [entry for entry in csharp if entry["entryScore"] > 0] or csharp[:20]
-        business_terms = summarize_terms(name, csharp)
-        dependencies = summarize_dependencies(csharp)
-        entry_symbols = symbol_refs(entry_points)
-        confidence = "static-first-pass" if csharp else "empty-or-non-csharp"
-        module = {
-            "logicalName": name,
-            "sourcePath": item["actualPath"],
-            "resolvedPath": item["resolvedPath"],
-            "generatedAt": now_iso(),
-            "semanticCard": {
-                "owns": [
-                    f"{name} owns the source tree at {item['actualPath']}.",
-                    f"Static scan found {len(csharp)} C# files and {len(entry_points)} likely entry files.",
-                    f"Project scope source: {item.get('projectScopeSource', 'project_discovery')}.",
-                ],
-                "not_owns": [
-                    "Generated/vendor/build output excluded by scope filters.",
-                    f"Excluded project files are not scanned: {len(item.get('excludedProjectFiles', []))}.",
-                    "Responsibilities not visible in source names require intake or overlay refinement.",
-                ],
-                "business_terms": business_terms or [name],
-                "misleading_terms": ["bootstrap-only", "vendor", "generated"],
-                "confused_modules": [],
-                "entry_symbols": entry_symbols,
-                "entry_files": [entry["file"] for entry in entry_points[:40]],
-                "fast_path_questions": [
-                    f"What is the main responsibility of {name}?",
-                    f"What are the main entry points of {name}?",
-                ],
-            },
-            "technicalContract": {
-                "entryPoints": entry_points,
-                "routeSurface": [entry["file"] for entry in entry_points[:20]],
-                "dependencies": dependencies,
-                "projectFiles": item.get("projectFiles", []),
-                "excludedProjectFiles": item.get("excludedProjectFiles", []),
-                "missingProjectFiles": item.get("missingProjectFiles", []),
-                "solutionFiles": item.get("solutionFiles", []),
-                "solutionFilterFiles": item.get("solutionFilterFiles", []),
-                "projectScopeSource": item.get("projectScopeSource", "project_discovery"),
-            },
-            "riskNotes": [
-                "This artifact is generated by static source scanning; review intake/overlay facts for business vocabulary.",
-                "Method bodies are not summarized yet; query runtime should extract listed files before broad search.",
-            ],
-            "confidence": confidence,
-        }
-        module_slug = slug(name)
-        (data_modules / f"{module_slug}.json").write_text(json.dumps(module, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        module_dir = modules_md / module_slug
+        module, symbols = build_module(wiki_root, scope, item)
+        module_id = module["id"]
+        write_json(data_modules / f"{module_id}.json", module)
+        module_dir = modules_md / module_id
         module_dir.mkdir(parents=True, exist_ok=True)
-        (module_dir / f"{module_slug}.md").write_text(render_module(module), encoding="utf-8", newline="\n")
-        symbols = {"module": name, "generatedAt": now_iso(), "symbols": csharp}
-        (data_symbols / f"{module_slug}.json").write_text(json.dumps(symbols, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        symbol_dir = symbols_md / module_slug
+        (module_dir / f"{module_id}.md").write_text(render_module(module), encoding="utf-8", newline="\n")
+        symbol_payload = {
+            "module": module["name"],
+            "module_id": module_id,
+            "generated_at": now_iso(),
+            "symbols": symbols,
+        }
+        for symbol in symbols:
+            write_json(data_symbols / f"{symbol['id']}.json", symbol)
+        write_json(data_symbols / f"{module_id}.json", symbol_payload)
+        symbol_dir = symbols_md / module_id
         symbol_dir.mkdir(parents=True, exist_ok=True)
-        (symbol_dir / "_index.md").write_text(f"# {name} Symbols\n\nBootstrap symbol seed count: {len(csharp)}\n", encoding="utf-8", newline="\n")
+        (symbol_dir / "_index.md").write_text(f"# {module['name']} Symbols\n\nSymbol seed count: {len(symbols)}\n", encoding="utf-8", newline="\n")
         built += 1
     print(f"modules built: {built}")
     return 0
@@ -613,80 +1093,290 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 '''
 
 
 COMMUNITY_BUILDER = r'''from __future__ import annotations
 
 import argparse
-import collections
-import json
-from datetime import datetime, timezone
+import os
+from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Any
+
+from .io import load_json, load_modules, slugify, write_json
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def node_label(node: dict[str, Any]) -> str:
+    return str(node.get("label") or node.get("id") or "")
 
 
-def group_entries(entries: list[dict]) -> list[dict]:
-    groups: collections.defaultdict[str, list[dict]] = collections.defaultdict(list)
-    for entry in entries:
-        groups[entry.get("entryKind", "source_file")].append(entry)
-    result = []
-    for kind, items in sorted(groups.items(), key=lambda pair: (-len(pair[1]), pair[0])):
-        result.append({
-            "name": kind,
-            "count": len(items),
-            "files": [item.get("file") for item in items[:15]],
-            "symbols": [
-                f"{item.get('file')} :: {symbol.get('name')}"
-                for item in items[:15]
-                for symbol in item.get("symbols", [])[:3]
-            ][:30],
-        })
-    return result
+def _load_path_variables(wiki_root: Path) -> dict[str, str]:
+    scope_path = wiki_root / "wiki.scope.json"
+    if not scope_path.exists():
+        return {}
+    scope = load_json(scope_path)
+    return {str(key): str(value) for key, value in (scope.get("pathVariables") or {}).items()}
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def _expand_path_variables(path_text: str, base_dir: Path, path_variables: dict[str, str]) -> str:
+    expanded = path_text
+    for key, value in path_variables.items():
+        token = "${" + key + "}"
+        if token not in expanded:
+            continue
+        root = Path(value) if len(value) >= 3 and value[1] == ":" and value[2] in {"\\", "/"} else _path_from_wiki_metadata(value, base_dir, {})
+        expanded = expanded.replace(token, str(root))
+    if "${" in expanded:
+        raise ValueError(f"Unresolved path variable in Hermes metadata path: {path_text}")
+    return expanded
+
+
+def _path_from_wiki_metadata(raw_path: str, base_dir: Path, path_variables: dict[str, str] | None = None) -> Path:
+    path_text = str(raw_path or "").strip()
+    if not path_text:
+        return Path(path_text)
+
+    was_variable_path = "${" in path_text
+    path_text = _expand_path_variables(path_text, base_dir, path_variables or {})
+
+    if len(path_text) >= 3 and path_text[1] == ":" and path_text[2] in {"\\", "/"}:
+        if not was_variable_path:
+            raise ValueError(f"Hermes metadata must use WSL or wiki-relative paths: {path_text}")
+        return Path(path_text)
+
+    if os.name != "nt" and path_text.startswith("/"):
+        return Path(path_text.replace("\\", "/"))
+
+    normalized = path_text.replace("\\", "/") if os.name != "nt" else path_text
+    path = Path(normalized)
+    if not path.is_absolute():
+        return base_dir / path
+    return path
+
+
+def _metadata_text(path: Path, base_dir: Path, path_variables: dict[str, str]) -> str:
+    resolved_path = path.resolve()
+    for key, value in sorted(path_variables.items()):
+        variable_root = (
+            Path(value)
+            if len(value) >= 3 and value[1] == ":" and value[2] in {"\\", "/"}
+            else _path_from_wiki_metadata(value, base_dir, {})
+        ).resolve()
+        if resolved_path == variable_root or variable_root in resolved_path.parents:
+            relative = os.path.relpath(resolved_path, variable_root).replace("\\", "/")
+            if relative == ".":
+                return "${" + key + "}"
+            return "${" + key + "}/" + relative
+    if path.is_absolute():
+        return os.path.relpath(path, base_dir).replace("\\", "/")
+    return str(path).replace("\\", "/")
+
+
+def node_file(node: dict[str, Any], wiki_root: Path, path_variables: dict[str, str], source_root: Path | None = None) -> str:
+    raw = str(node.get("source_file") or "")
+    if raw in {"", "."}:
+        return ""
+    if len(raw) >= 3 and raw[1] == ":" and raw[2] in {"\\", "/"}:
+        return _metadata_text(Path(raw), wiki_root, path_variables)
+    path = Path(raw.replace("\\", "/"))
+    if source_root is not None and not path.is_absolute() and "${" not in raw:
+        return _metadata_text(source_root / path, wiki_root, path_variables)
+    return _metadata_text(_path_from_wiki_metadata(raw, wiki_root, path_variables), wiki_root, path_variables)
+
+
+def build_module_communities(
+    module: dict[str, Any],
+    top_per_module: int,
+    wiki_root: Path,
+    path_variables: dict[str, str],
+) -> list[dict[str, Any]]:
+    graphify = module.get("graphify") or {}
+    graph_path = graphify.get("graph_json_path")
+    if not graph_path:
+        return []
+    resolved_graph_path = _path_from_wiki_metadata(str(graph_path), wiki_root, path_variables)
+    if not resolved_graph_path.exists():
+        return []
+
+    graph = load_json(resolved_graph_path)
+    nodes = graph.get("nodes") or []
+    edges = graph.get("links") or graph.get("edges") or []
+    source_root = Path(str(module.get("resolvedPath") or "")) if module.get("resolvedPath") else None
+
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for node in nodes:
+        community = node.get("community")
+        if community is None:
+            continue
+        grouped[int(community)].append(node)
+
+    edge_counter: Counter[int] = Counter()
+    node_community_by_id = {str(node.get("id")): node.get("community") for node in nodes}
+    for edge in edges:
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        for node_id in (source, target):
+            community = node_community_by_id.get(node_id)
+            if community is not None:
+                edge_counter[int(community)] += 1
+
+    ranked = sorted(
+        grouped.items(),
+        key=lambda item: (len(item[1]), edge_counter[item[0]]),
+        reverse=True,
+    )[:top_per_module]
+
+    module_id = str(module.get("id") or slugify(str(module.get("name") or "module")))
+    communities: list[dict[str, Any]] = []
+    for community_id, members in ranked:
+        labels = [node_label(node) for node in members if node_label(node)]
+        files = [
+            file
+            for node in members
+            for file in [node_file(node, wiki_root, path_variables, source_root)]
+            if file
+        ]
+        label_counts = Counter(labels)
+        file_counts = Counter(files)
+        top_labels = [label for label, _ in label_counts.most_common(20)]
+        top_files = [file for file, _ in file_counts.most_common(12)]
+        title = infer_title(top_labels, top_files)
+        communities.append(
+            {
+                "id": f"{module_id}.community.{community_id}",
+                "module_id": module_id,
+                "module_name": module.get("name"),
+                "solution_group": module.get("solution_group"),
+                "community_id": community_id,
+                "title": title,
+                "summary": (
+                    f"Deterministic Graphify community index for {module.get('name')} "
+                    f"community {community_id}. LLM semantic summary is not generated yet."
+                ),
+                "node_count": len(members),
+                "edge_touch_count": edge_counter[community_id],
+                "core_symbols": top_labels,
+                "source_files": top_files,
+                "business_hint": "",
+                "risk_notes": [
+                    "This is deterministic navigation metadata, not source-of-truth business logic.",
+                    "Use DynamicCodeProvider for detailed logic verification.",
+                ],
+                "confidence": 0.62,
+                "graph_json_path": _metadata_text(resolved_graph_path, wiki_root, path_variables),
+            }
+        )
+    return communities
+
+
+def infer_title(labels: list[str], files: list[str]) -> str:
+    interesting = [
+        label
+        for label in labels
+        if label and not label.endswith(".cs") and not label.startswith(".") and len(label) <= 80
+    ]
+    if interesting:
+        return " / ".join(interesting[:3])
+    if files:
+        return Path(files[0]).name
+    return "Untitled community"
+
+
+def write_community_markdown(wiki_root: Path, community: dict[str, Any]) -> None:
+    solution = slugify(str(community.get("solution_group") or "Unknown"))
+    module = slugify(str(community.get("module_name") or community["module_id"]))
+    path = wiki_root / "Wiki" / "03_Communities" / solution / module / f"Community {community['community_id']}.md"
+    lines = [
+        "---",
+        f"title: {community['title']}",
+        "tags:",
+        "  - llm-wiki",
+        "  - graphify-community",
+        "status: deterministic-index",
+        "---",
+        "",
+        f"# Community {community['community_id']} - {community['title']}",
+        "",
+        community["summary"],
+        "",
+        "## Metadata",
+        "",
+        f"- Module: {community['module_id']}",
+        f"- Node count: {community['node_count']}",
+        f"- Edge touch count: {community['edge_touch_count']}",
+        f"- Confidence: {community['confidence']}",
+        "",
+        "## Core Symbols",
+        "",
+        *[f"- `{symbol}`" for symbol in community["core_symbols"][:20]],
+        "",
+        "## Source Files",
+        "",
+        *[f"- `{file}`" for file in community["source_files"][:12]],
+        "",
+        "## Risk Notes",
+        "",
+        *[f"- {note}" for note in community["risk_notes"]],
+        "",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def clear_existing_communities(wiki_root: Path) -> None:
+    for path in (wiki_root / "Wiki" / "_data" / "communities").glob("*.json"):
+        path.unlink()
+    community_root = wiki_root / "Wiki" / "03_Communities"
+    if community_root.exists():
+        for path in community_root.rglob("Community *.md"):
+            path.unlink()
+        for path in sorted(community_root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            if path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+
+
+def build_all(wiki_root: Path, top_per_module: int) -> list[dict[str, Any]]:
+    all_communities: list[dict[str, Any]] = []
+    path_variables = _load_path_variables(wiki_root)
+    for module in load_modules(wiki_root):
+        communities = build_module_communities(module, top_per_module, wiki_root, path_variables)
+        all_communities.extend(communities)
+    if all_communities:
+        clear_existing_communities(wiki_root)
+        for community in all_communities:
+            out_json = wiki_root / "Wiki" / "_data" / "communities" / f"{community['id'].replace('.', '-')}.json"
+            write_json(out_json, community)
+            write_community_markdown(wiki_root, community)
+    return all_communities
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Build deterministic Graphify community index")
     parser.add_argument("--wiki-root", default=".")
     parser.add_argument("--top-per-module", type=int, default=10)
-    args = parser.parse_args()
-    root = Path(args.wiki_root).resolve()
-    out = root / "Wiki" / "_data" / "communities"
-    out.mkdir(parents=True, exist_ok=True)
-    count = 0
-    for module_file in (root / "Wiki" / "_data" / "modules").glob("*.json"):
-        module = json.loads(module_file.read_text(encoding="utf-8"))
-        entries = module.get("technicalContract", {}).get("entryPoints", [])[: args.top_per_module]
-        all_entries = module.get("technicalContract", {}).get("entryPoints", [])
-        community = {
-            "module": module.get("logicalName"),
-            "generatedAt": now_iso(),
-            "source": "static_module_derived",
-            "degraded": True,
-            "reason": "Graph backend is not bundled; community fallback is derived from static module metadata.",
-            "terms": module.get("semanticCard", {}).get("business_terms", [])[:30],
-            "dependencies": module.get("technicalContract", {}).get("dependencies", [])[:30],
-            "clusters": group_entries(all_entries),
-            "items": [
-                {
-                    "file": entry.get("file"),
-                    "kind": entry.get("entryKind", "entry_point"),
-                    "symbols": [symbol.get("name") for symbol in entry.get("symbols", [])[:10]],
-                }
-                for entry in entries
-            ],
-        }
-        (out / module_file.name).write_text(json.dumps(community, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        count += 1
-    print(f"communities built: {count}")
+    args = parser.parse_args(argv)
+
+    wiki_root = Path(args.wiki_root).resolve()
+    communities = build_all(wiki_root, args.top_per_module)
+    print(f"communities_written: {len(communities)}")
+    modules = sorted({item["module_id"] for item in communities})
+    print(f"modules_with_communities: {len(modules)}")
+    for module_id in modules[:20]:
+        count = sum(1 for item in communities if item["module_id"] == module_id)
+        print(f"- {module_id}: {count}")
+    if not communities:
+        print("skip_reason=no_graphify_communities_available")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 '''
 
 
@@ -923,7 +1613,7 @@ def build_scope(project_name: str | None, repo_path: str | None) -> dict:
         "inventory": {
             "childDepth": 1,
             "markerMaxDepth": 2,
-            "markerFiles": ["package.json"],
+            "markerFiles": ["package.json", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"],
             "markerExtensions": [".sln", ".csproj", ".vbproj"],
             "skipDirectoryNames": sorted(SKIP_DIRS),
         },
@@ -973,8 +1663,6 @@ def create_scaffold(args: argparse.Namespace) -> list[str]:
         "Wiki/02_Symbols",
         "Wiki/03_Communities",
         "intake",
-        "scripts/query_runtime",
-        "scripts/repo_sync",
     ]
     for rel in dirs:
         path = wiki_root / rel
@@ -982,16 +1670,7 @@ def create_scaffold(args: argparse.Namespace) -> list[str]:
         created.append(str(path))
 
     files = {
-        "scripts/__init__.py": "",
-        "scripts/query_runtime/__init__.py": "",
-        "scripts/repo_sync/__init__.py": "",
-        "scripts/update_wiki.py": UPDATE_WIKI,
-        "scripts/generate_module_wiki.py": GENERATE_MODULE_WIKI,
-        "scripts/query_runtime/community_builder.py": COMMUNITY_BUILDER,
-        "scripts/query_runtime/graph_runtime.py": GRAPH_RUNTIME,
-        "scripts/query_runtime/eval_queries.py": EVAL_QUERIES,
-        "scripts/repo_sync/diff_wiki.py": DIFF_WIKI,
-        "requirements.txt": "# Bootstrap scaffold uses Python standard library only.\n# Add toolkit-specific dependencies here when you extend the pipeline.\n",
+        "requirements.txt": "graphifyy>=0.4.10,<0.9\nlanggraph>=0.2\ntree-sitter>=0.21\ntree-sitter-c-sharp>=0.21\n",
         "README.md": "# LLM Wiki\n\nBootstrap-created LLM Wiki environment. Run module onboarding next to strengthen metadata and evidence.\n",
     }
     for rel, content in files.items():

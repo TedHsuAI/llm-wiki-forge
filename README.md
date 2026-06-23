@@ -52,10 +52,13 @@ python -m pip install -e .
 - read access to the target repo
 - recommended: `ripgrep` (`rg`)
 - for C# repos: `.sln` / `.slnf` / `.csproj` files are preferred when available
+- Graphify package: `graphifyy>=0.4.10,<0.9`
 
 When a repo contains unloaded or intentionally excluded Visual Studio projects, prefer a shared `.slnf` solution filter. The bootstrap scanner treats `.slnf` projects as the active project set and skips C# files outside those project roots. If no `.slnf` is present, it uses `.sln` project entries as the active solution scope and skips `.csproj` folders that are not part of the solution.
 
-The bootstrap scaffold uses only the Python standard library. If you later connect a richer query runtime, Tree-sitter, Graphify, or LangGraph, install those dependencies in the generated wiki environment.
+Installing `llm-wiki-forge` installs the core Python runtime dependencies, including `graphifyy`, LangGraph, Tree-sitter, and the C# parser. Bootstrap also writes those same core dependencies into the generated wiki `requirements.txt`; run CLI commands with `--install-requirements` when the wiki virtual environment must be created or refreshed. Missing or failing Graphify is treated as a generation error, not a downgraded result.
+
+The production Obsidian wiki also tracks external tools in `Wiki/_data/tooling.status.json`: `graphify`, `repomix`, `dotnet`, `node`, and `npm`. Forge writes the same style of tool/runtime status during `update_wiki`; install `repomix`, `.NET SDK`, and Node.js/npm separately when those stages are required. GraphRAG is available as an optional extra with `llm-wiki-forge[graphrag]`.
 
 ## CLI Usage
 
@@ -94,6 +97,31 @@ Create or update repo sync state:
 ```bash
 llm-wiki sync --repo <repo_path> --wiki-root <wiki_root> --accept-baseline
 ```
+
+Add a repo to an existing multi-repo wiki registry:
+
+```bash
+llm-wiki repo add \
+  --repo /home/tedhsu/DispatchRawdata/<RepoName> \
+  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --source-root /home/tedhsu/DispatchRawdata \
+  --repo-key <RepoKey> \
+  --wiki-path <WikiPath>
+```
+
+Run scheduled-style sync through the registry:
+
+```bash
+llm-wiki sync \
+  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --source-root /home/tedhsu/DispatchRawdata \
+  --repo-key <RepoKey> \
+  --accept-baseline
+```
+
+For this Forge-centered flow, build/sync/onboarding execution lives in `llm-wiki-forge`.
+An existing wiki root may keep `scripts/query_runtime` during the transitional query-runtime phase,
+but `scripts/` is no longer required just to recognize an existing wiki root.
 
 The CLI auto-detects Python and creates `<wiki_root>/.venv` when needed.
 
@@ -255,10 +283,13 @@ python -m pip install -e .
 - 可讀取目標 repo
 - 建議安裝 `ripgrep` (`rg`)
 - C# repo 建議具備 `.sln` / `.slnf` / `.csproj`
+- Graphify 套件：`graphifyy>=0.4.10,<0.9`
 
 如果 repo 裡有已卸載或刻意排除的 Visual Studio project，建議提供可分享的 `.slnf` solution filter。Bootstrap scanner 會把 `.slnf` 內列出的 projects 視為 active project set，並跳過不在這些 project roots 底下的 C# 檔案。若沒有 `.slnf`，則使用 `.sln` 內的 project entries 作為解決方案範圍，跳過不屬於 solution 的 `.csproj` 目錄。
 
-Bootstrap 產生的最小環境只使用 Python standard library。若後續接入 Tree-sitter、Graphify、LangGraph 或更完整的 query runtime，再依需求安裝額外套件。
+安裝 `llm-wiki-forge` 會一起安裝核心 Python runtime 依賴，包含 `graphifyy`、LangGraph、Tree-sitter 與 C# parser。Bootstrap 也會把同一組核心依賴寫入產生的 wiki `requirements.txt`；如果需要建立或更新 wiki virtual environment，請在 CLI 命令加上 `--install-requirements`。Graphify 缺失或執行失敗會視為生成錯誤，不再產生降級結果。
+
+正式 Obsidian wiki 也會在 `Wiki/_data/tooling.status.json` 追蹤外部工具：`graphify`、`repomix`、`dotnet`、`node`、`npm`。Forge 目前也會在 `update_wiki` 寫出同類型的工具與 runtime 狀態；`repomix`、`.NET SDK`、Node.js/npm 需要依使用場景另行安裝。GraphRAG 已提供選用 extra：`llm-wiki-forge[graphrag]`。
 
 ## CLI 用法
 
@@ -297,6 +328,31 @@ llm-wiki backfill --wiki-root <wiki_root> --repo <repo_name>
 ```bash
 llm-wiki sync --repo <repo_path> --wiki-root <wiki_root> --accept-baseline
 ```
+
+將 repo 加入既有 multi-repo wiki registry：
+
+```bash
+llm-wiki repo add \
+  --repo /home/tedhsu/DispatchRawdata/<RepoName> \
+  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --source-root /home/tedhsu/DispatchRawdata \
+  --repo-key <RepoKey> \
+  --wiki-path <WikiPath>
+```
+
+透過 registry 執行排程同等 sync：
+
+```bash
+llm-wiki sync \
+  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --source-root /home/tedhsu/DispatchRawdata \
+  --repo-key <RepoKey> \
+  --accept-baseline
+```
+
+在這個 Forge-centered flow 裡，build/sync/onboarding 的實作由 `llm-wiki-forge` 負責。
+既有 wiki root 可以在過渡期保留 `scripts/query_runtime` 作為查詢 runtime，
+但 `scripts/` 不再是判斷既有 wiki root 的必要條件。
 
 CLI 會自動偵測 Python，必要時建立 `<wiki_root>/.venv`。
 

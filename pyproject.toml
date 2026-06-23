@@ -12,6 +12,12 @@ authors = [
   { name = "LLM Wiki Forge contributors" }
 ]
 keywords = ["llm", "wiki", "csharp", "dotnet", "ai-skills", "code-intelligence"]
+dependencies = [
+  "graphifyy>=0.4.10,<0.9",
+  "langgraph>=0.2",
+  "tree-sitter>=0.21",
+  "tree-sitter-c-sharp>=0.21",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -24,8 +30,17 @@ classifiers = [
 [project.scripts]
 llm-wiki = "llm_wiki_forge.cli:main"
 
+[project.optional-dependencies]
+android = [
+  "tree-sitter-kotlin>=1.0",
+  "tree-sitter-java>=0.21",
+]
+graphrag = [
+  "graphrag>=3.0,<4",
+]
+
 [tool.setuptools.packages.find]
 include = ["llm_wiki_forge*"]
 
 [tool.setuptools.package-data]
-llm_wiki_forge = ["resources/*.py"]
+llm_wiki_forge = ["resources/*.py", "resources/scripts/*.py", "resources/scripts/query_runtime/*.py"]

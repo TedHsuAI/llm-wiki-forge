@@ -104,8 +104,8 @@ After bootstrap, verify:
 ```bash
 <python_command> -m scripts.update_wiki --wiki-root "<wiki_root>"
 <python_command> -m scripts.generate_module_wiki --wiki-root "<wiki_root>"
-<python_command> -m scripts.query_runtime.community_builder --wiki-root "<wiki_root>" --top-per-module 10
-<python_command> -m scripts.query_runtime.graph_runtime --wiki-root "<wiki_root>" --question "<project_name> 的主要責任是什麼？" --top 5 --extract --extract-limit 4
+<python_command> -m llm_wiki_forge community build --wiki-root "<wiki_root>" --top-per-module 10
+<python_command> -m llm_wiki_forge graph --wiki-root "<wiki_root>" --question "<project_name> 的主要責任是什麼？" --top 5 --extract --extract-limit 4
 ```
 
 Expected:

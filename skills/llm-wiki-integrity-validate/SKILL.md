@@ -102,7 +102,7 @@ Failing behavior:
 Run at least one responsibility smoke in focused mode:
 
 ```bash
-<python_command> -m scripts.query_runtime.graph_runtime --wiki-root "<wiki_root>" --question "<module_name> 的主要責任是什麼？" --top 5 --extract --extract-limit 4
+<python_command> -m llm_wiki_forge graph --wiki-root "<wiki_root>" --question "<module_name> 的主要責任是什麼？" --top 5 --extract --extract-limit 4
 ```
 
 Open the newest evidence pack under:
@@ -133,8 +133,8 @@ For quick mode, evals are optional unless query runtime changed.
 For full mode or runtime/shared pipeline changes, run the local Python eval entrypoint when available:
 
 ```bash
-<python_command> -m scripts.query_runtime.eval_queries --wiki-root "<wiki_root>" --runtime graph
-<python_command> -m scripts.query_runtime.eval_queries --wiki-root "<wiki_root>" --runtime classic
+<python_command> -m llm_wiki_forge eval --wiki-root "<wiki_root>" --runtime graph
+<python_command> -m llm_wiki_forge eval --wiki-root "<wiki_root>" --runtime classic
 ```
 
 If eval dependencies are missing, report `PARTIAL` or `FAIL` depending on risk. Do not claim PASS for a skipped required eval.

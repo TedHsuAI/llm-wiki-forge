@@ -112,7 +112,7 @@ If graph/community dependencies are unavailable, PASS requires explicit fallback
 Run a simple responsibility question first:
 
 ```bash
-<python_command> -m scripts.query_runtime.graph_runtime --wiki-root "<wiki_root>" --question "<project_name> 的主要責任是什麼？" --top 5 --extract --extract-limit 4
+<python_command> -m llm_wiki_forge graph --wiki-root "<wiki_root>" --question "<project_name> 的主要責任是什麼？" --top 5 --extract --extract-limit 4
 ```
 
 Open the newest JSON under `Wiki/_data/query_runs`. Passing evidence should include the new module name, source path, or generated module JSON. For implementation questions, passing evidence should include exact source files or symbols in `direct_evidence` or an equivalent evidence field.
