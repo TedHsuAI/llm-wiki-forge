@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from importlib import resources
@@ -37,46 +36,21 @@ def command_works(command: list[str]) -> bool:
         return False
 
 
-def venv_python(wiki_root: Path) -> Path:
-    if os.name == "nt":
-        return wiki_root / ".venv" / "Scripts" / "python.exe"
-    return wiki_root / ".venv" / "bin" / "python"
-
-
-def first_system_python() -> list[str] | None:
-    candidates: list[list[str]] = []
+def selected_python() -> Path:
+    configured = os.environ.get("LLM_WIKI_PYTHON")
+    if configured:
+        return Path(configured).expanduser()
     if sys.executable:
-        candidates.append([sys.executable])
-    for name in ("python", "python3"):
-        found = shutil.which(name)
-        if found:
-            candidates.append([found])
-    py_launcher = shutil.which("py")
-    if py_launcher:
-        candidates.append([py_launcher, "-3"])
-
-    seen: set[tuple[str, ...]] = set()
-    for candidate in candidates:
-        key = tuple(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        if command_works(candidate):
-            return candidate
-    return None
+        return Path(sys.executable)
+    raise SystemExit("No usable Python found. Set LLM_WIKI_PYTHON or run llm_wiki_forge with the Python you want to use.")
 
 
 def ensure_python(wiki_root: Path, install_requirements: bool = False) -> Path:
     wiki_root.mkdir(parents=True, exist_ok=True)
-    py = venv_python(wiki_root)
-    if not py.exists():
-        system_python = first_system_python()
-        if not system_python:
-            raise SystemExit("Python 3.11+ was not found. Install Python or pass a prepared wiki root with .venv.")
-
-        run(system_python + ["-m", "venv", str(wiki_root / ".venv")])
-        if not py.exists():
-            raise SystemExit(f"Failed to create venv Python at {py}")
+    py = selected_python()
+    if not command_works([str(py)]):
+        source = "LLM_WIKI_PYTHON" if os.environ.get("LLM_WIKI_PYTHON") else "current Python"
+        raise SystemExit(f"No usable Python found from {source}: {py}")
 
     requirements = wiki_root / "requirements.txt"
     if install_requirements and requirements.exists():
@@ -609,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--wiki-root", help="LLM Wiki root. Defaults to <repo_parent>/<repo_name>-llm-wiki.")
     build.add_argument("--project-name", help="Module name. Defaults to repo folder name.")
     build.add_argument("--question", help="Smoke question.")
-    build.add_argument("--install-requirements", action="store_true", help="Install requirements.txt into the wiki venv when present.")
+    build.add_argument("--install-requirements", action="store_true", help="Install requirements.txt into the selected Python environment when present.")
     build.set_defaults(func=command_build)
 
     bootstrap = sub.add_parser("bootstrap", help="Create a first-run LLM Wiki root.")
