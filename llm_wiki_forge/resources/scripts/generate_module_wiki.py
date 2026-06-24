@@ -219,12 +219,15 @@ def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
     if not source.exists():
         return []
     scan_root = source.parent if source.is_file() else source
+    excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
     if platform == "csharp":
         active_roots = [Path(project).resolve().parent for project in item.get("projectFiles") or [] if Path(project).exists()]
         enforce_scope = item.get("projectScopeSource") in {"solution_filter", "solution"} and bool(active_roots)
         files = []
         for path in scan_root.rglob("*.cs"):
             if should_skip(path):
+                continue
+            if excluded_roots and is_under_any(path, excluded_roots):
                 continue
             if enforce_scope and not is_under_any(path, active_roots):
                 continue
@@ -238,6 +241,8 @@ def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
     files = []
     for path in scan_root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in extensions or should_skip(path):
+            continue
+        if excluded_roots and is_under_any(path, excluded_roots):
             continue
         lowered = path.as_posix().lower()
         if "/src/test/" in lowered or "/src/androidtest/" in lowered:
@@ -452,18 +457,19 @@ def summarize_terms(name: str, entries: list[dict[str, Any]]) -> list[str]:
     return [word for word, _ in counter.most_common(40)]
 
 
-def discover_android_surfaces(source: Path) -> dict[str, Any]:
+def discover_android_surfaces(source: Path, excluded_roots: list[Path] | None = None) -> dict[str, Any]:
     scan_root = source.parent if source.is_file() else source
+    excluded_roots = excluded_roots or []
     gradle_files = [
         str(path.relative_to(scan_root)).replace("\\", "/")
         for name in ANDROID_BUILD_FILES
         for path in scan_root.rglob(name)
-        if not should_skip(path)
+        if not should_skip(path) and not is_under_any(path, excluded_roots)
     ][:80]
     manifests = []
     manifest_components: list[str] = []
     for manifest in scan_root.rglob("AndroidManifest.xml"):
-        if should_skip(manifest):
+        if should_skip(manifest) or is_under_any(manifest, excluded_roots):
             continue
         rel = str(manifest.relative_to(scan_root)).replace("\\", "/")
         manifests.append(rel)
@@ -565,7 +571,8 @@ def build_module(
     entries, symbols = scan_sources(item, platform, files)
     entry_points = [entry for entry in entries if int(entry.get("entryScore") or 0) > 0] or entries[:25]
     terms = summarize_terms(name, entries)
-    android = discover_android_surfaces(source) if platform == "android" and source.exists() else {}
+    excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
+    android = discover_android_surfaces(source, excluded_roots) if platform == "android" and source.exists() else {}
     guard_note = (
         "Mixed Android and C# project markers were found under this target; source scanning was blocked. "
         "Split wiki.scope.json targets to the Android and C# project roots before generating module evidence."
@@ -589,6 +596,8 @@ def build_module(
         "dependencies": [],
         "projectFiles": item.get("projectFiles", []),
         "excludedProjectFiles": item.get("excludedProjectFiles", []),
+        "excludePaths": item.get("excludePaths", []),
+        "resolvedExcludePaths": item.get("resolvedExcludePaths", []),
         "missingProjectFiles": item.get("missingProjectFiles", []),
         "solutionFiles": item.get("solutionFiles", []),
         "solutionFilterFiles": item.get("solutionFilterFiles", []),
