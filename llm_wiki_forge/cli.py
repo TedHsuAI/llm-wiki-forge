@@ -573,7 +573,7 @@ def command_update(args: argparse.Namespace) -> None:
 
 def command_install_hermes(args: argparse.Namespace) -> None:
     hermes_root = Path(args.hermes_root).expanduser().resolve()
-    integration = resources.files("llm_wiki_forge.resources").joinpath("integrations/hermes")
+    integration = resources.files("llm_wiki_forge.integrations").joinpath("hermes")
     sections = ["tools", "skills", "tests"]
     if not args.no_hook:
         sections.append("hooks")

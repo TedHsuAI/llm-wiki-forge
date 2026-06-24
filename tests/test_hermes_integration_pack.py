@@ -13,7 +13,7 @@ FORBIDDEN_TOKENS = (
 
 
 def integration_root():
-    return resources.files("llm_wiki_forge.resources").joinpath("integrations/hermes")
+    return resources.files("llm_wiki_forge.integrations").joinpath("hermes")
 
 
 def test_hermes_integration_manifest_targets_expected_files():

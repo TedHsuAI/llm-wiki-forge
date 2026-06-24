@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llm-wiki-forge"
 version = "0.1.0"
-description = "Skills and a thin CLI for building LLM Wiki artifacts from C#/.NET repositories."
+description = "Skills and a CLI for building and querying LLM Wiki artifacts from .NET and Android repositories."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
   { name = "LLM Wiki Forge contributors" }
 ]
-keywords = ["llm", "wiki", "csharp", "dotnet", "ai-skills", "code-intelligence"]
+keywords = ["llm", "wiki", "csharp", "dotnet", "android", "ai-skills", "code-intelligence"]
 dependencies = [
   "graphifyy>=0.4.10,<0.9",
   "langgraph>=0.2",
@@ -47,10 +47,10 @@ llm_wiki_forge = [
   "resources/*.py",
   "resources/scripts/*.py",
   "resources/scripts/query_runtime/*.py",
-  "resources/integrations/hermes/*.md",
-  "resources/integrations/hermes/*.json",
-  "resources/integrations/hermes/tools/*.py",
-  "resources/integrations/hermes/skills/llm-wiki-query/*.md",
-  "resources/integrations/hermes/hooks/*.py",
-  "resources/integrations/hermes/tests/*.py",
+  "integrations/hermes/*.md",
+  "integrations/hermes/*.json",
+  "integrations/hermes/tools/*.py",
+  "integrations/hermes/skills/llm-wiki-query/*.md",
+  "integrations/hermes/hooks/*.py",
+  "integrations/hermes/tests/*.py",
 ]

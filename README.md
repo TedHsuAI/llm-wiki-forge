@@ -1,19 +1,50 @@
 # LLM Wiki Forge
 
+[English](README.md) | [繁體中文](README.zh-TW.md)
+
 LLM Wiki Forge is the versioned correctness engine for a local LLM Wiki.
 
 It owns the workflows that change or verify evidence:
 
-- update registered source repos
+- update registered source repositories
 - refresh generated wiki artifacts
 - query code behavior through packaged runtimes
 - run deterministic source search
 - validate evidence freshness and reuse
-- ship the canonical Hermes tool and skill integration pack
+- ship canonical runtime integration packs, including Hermes
 
 Hermes can still be the conversation layer. Forge is the source of truth for the query and maintenance behavior behind it.
 
 Repository: <https://github.com/TedHsuAI/llm-wiki-forge>
+
+## Supported Targets
+
+LLM Wiki Forge currently supports two code families:
+
+- `.NET / C#`
+- `Android / Kotlin / Java`
+
+The `.NET / C#` pipeline is the primary and most exercised path. Android support uses optional parser dependencies and should be enabled when Android repositories are being processed.
+
+## Project Layout
+
+```text
+llm_wiki_forge/
+  cli.py                         # CLI commands
+  workflows.py                   # update, refresh, code query orchestration
+  query_adapter.py               # Hermes-compatible query/source-search payloads
+  repo_sync.py                   # registered repo sync state
+  runtime.py                     # packaged runtime execution
+  integrations/
+    hermes/                      # Forge-owned Hermes integration pack
+  resources/
+    bootstrap_llm_wiki.py        # bootstrap generator
+    scripts/query_runtime/       # packaged query runtime modules
+skills/                          # agent-facing LLM Wiki skills
+tests/                           # Forge and integration tests
+```
+
+`llm_wiki_forge/integrations/hermes` is intentionally visible. It is not hidden under low-level resources because it is a public integration contract: Hermes installs runtime copies from here, while Forge keeps the versioned source.
 
 ## Responsibility Boundary
 
@@ -28,7 +59,7 @@ Hermes integration pack
   Forge-owned copies of Hermes tools, skills, guard rules, and tests
 ```
 
-The intended split is simple: Forge owns correctness, Hermes owns presentation and semantic organization.
+The intended split is simple: Forge owns correctness; Hermes owns presentation and semantic organization.
 
 ## Current Capabilities
 
@@ -52,7 +83,7 @@ The intended split is simple: Forge owns correctness, Hermes owns presentation a
 Forge includes the canonical Hermes integration pack:
 
 ```text
-llm_wiki_forge/resources/integrations/hermes/
+llm_wiki_forge/integrations/hermes/
   tools/llm_wiki_query.py
   tools/llm_wiki_forge.py
   skills/llm-wiki-query/SKILL.md
@@ -79,6 +110,12 @@ cd llm-wiki-forge
 python -m pip install -e .
 ```
 
+Enable Android parser dependencies when processing Android repositories:
+
+```bash
+python -m pip install -e ".[android]"
+```
+
 The CLI entrypoint is:
 
 ```bash
@@ -97,10 +134,11 @@ python -m llm_wiki_forge --version
 - Git
 - read access to the source repos
 - recommended: `rg`
-- for C# repos: `.slnf`, `.sln`, and `.csproj` improve extraction scope
+- for `.NET / C#`: `.slnf`, `.sln`, and `.csproj` improve extraction scope
+- for Android: Kotlin/Java parser dependencies from the `android` extra
 - Graphify package: `graphifyy>=0.4.10,<0.9`
 
-When a repo contains unloaded or intentionally excluded Visual Studio projects, prefer a shared `.slnf` solution filter. Forge treats `.slnf` projects as the active project set and skips C# files outside those project roots. If no `.slnf` exists, Forge uses `.sln` project entries when available.
+When a `.NET` repo contains unloaded or intentionally excluded Visual Studio projects, prefer a shared `.slnf` solution filter. Forge treats `.slnf` projects as the active project set and skips C# files outside those project roots. If no `.slnf` exists, Forge uses `.sln` project entries when available.
 
 ## CLI Quick Start
 
@@ -243,7 +281,7 @@ Do not answer code behavior from memory. A valid answer should be grounded in an
 | --- | --- |
 | `llm-wiki-build` | Main AI entrypoint for a full build flow |
 | `llm-wiki-bootstrap` | Create a new LLM Wiki root |
-| `llm-wiki-module-onboarding` | Build one C# repo into a wiki module |
+| `llm-wiki-module-onboarding` | Build one repo into a wiki module |
 | `llm-wiki-integrity-validate` | Read-only health check |
 | `llm-wiki-repo-infra-backfill` | Improve one existing repo's wiki artifacts |
 | `llm-wiki-master-sync` | Update wiki state from repo git changes |
