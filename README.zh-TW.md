@@ -24,7 +24,7 @@ LLM Wiki Forge 目前僅支援兩類程式碼：
 - `.NET / C#`
 - `Android / Kotlin / Java`
 
-`.NET / C#` 是目前最主要、驗證最多的路徑。Android 需安裝 optional parser dependencies，處理 Android repo 時再啟用。
+兩類 parser 都會預設安裝。`.NET / C#` 是目前驗證最多的路徑；Android 已可使用，但仍應依目標 repo 做實際驗證。
 
 ## 專案分類
 
@@ -109,12 +109,6 @@ cd llm-wiki-forge
 python -m pip install -e .
 ```
 
-處理 Android repo 時啟用 Android parser dependencies：
-
-```bash
-python -m pip install -e ".[android]"
-```
-
 CLI entrypoint：
 
 ```bash
@@ -134,7 +128,7 @@ python -m llm_wiki_forge --version
 - 可讀取來源 repo
 - 建議安裝 `rg`
 - `.NET / C#`：`.slnf`、`.sln`、`.csproj` 可提升 extraction scope 準確度
-- Android：使用 `android` optional extra 中的 Kotlin/Java parser dependencies
+- Android：Kotlin/Java parser dependencies 會隨預設安裝
 - Graphify package：`graphifyy>=0.4.10,<0.9`
 
 當 `.NET` repo 有被卸載或刻意排除的 Visual Studio projects，請優先使用共享的 `.slnf` solution filter。Forge 會把 `.slnf` projects 視為 active project set，並略過 project roots 外的 C# files。沒有 `.slnf` 時，Forge 會使用 `.sln` project entries。

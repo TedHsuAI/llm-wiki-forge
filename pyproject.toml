@@ -17,6 +17,8 @@ dependencies = [
   "langgraph>=0.2",
   "tree-sitter>=0.21",
   "tree-sitter-c-sharp>=0.21",
+  "tree-sitter-kotlin>=1.0",
+  "tree-sitter-java>=0.21",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -31,10 +33,6 @@ classifiers = [
 llm-wiki = "llm_wiki_forge.cli:main"
 
 [project.optional-dependencies]
-android = [
-  "tree-sitter-kotlin>=1.0",
-  "tree-sitter-java>=0.21",
-]
 graphrag = [
   "graphrag>=3.0,<4",
 ]

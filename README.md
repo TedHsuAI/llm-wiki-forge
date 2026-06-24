@@ -24,7 +24,7 @@ LLM Wiki Forge currently supports two code families:
 - `.NET / C#`
 - `Android / Kotlin / Java`
 
-The `.NET / C#` pipeline is the primary and most exercised path. Android support uses optional parser dependencies and should be enabled when Android repositories are being processed.
+Parsers for both families are installed by default. The `.NET / C#` pipeline is currently the most exercised path; Android support is available but should still be validated against the target repo.
 
 ## Project Layout
 
@@ -110,12 +110,6 @@ cd llm-wiki-forge
 python -m pip install -e .
 ```
 
-Enable Android parser dependencies when processing Android repositories:
-
-```bash
-python -m pip install -e ".[android]"
-```
-
 The CLI entrypoint is:
 
 ```bash
@@ -135,7 +129,7 @@ python -m llm_wiki_forge --version
 - read access to the source repos
 - recommended: `rg`
 - for `.NET / C#`: `.slnf`, `.sln`, and `.csproj` improve extraction scope
-- for Android: Kotlin/Java parser dependencies from the `android` extra
+- for Android: Kotlin/Java parser dependencies are installed by default
 - Graphify package: `graphifyy>=0.4.10,<0.9`
 
 When a `.NET` repo contains unloaded or intentionally excluded Visual Studio projects, prefer a shared `.slnf` solution filter. Forge treats `.slnf` projects as the active project set and skips C# files outside those project roots. If no `.slnf` exists, Forge uses `.sln` project entries when available.
