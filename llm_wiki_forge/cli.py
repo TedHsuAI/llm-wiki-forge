@@ -571,6 +571,34 @@ def command_update(args: argparse.Namespace) -> None:
     )
 
 
+def command_install_hermes(args: argparse.Namespace) -> None:
+    hermes_root = Path(args.hermes_root).expanduser().resolve()
+    integration = resources.files("llm_wiki_forge.resources").joinpath("integrations/hermes")
+    sections = ["tools", "skills", "tests"]
+    if not args.no_hook:
+        sections.append("hooks")
+
+    with resources.as_file(integration) as integration_root:
+        manifest_path = integration_root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        install = manifest.get("install") or {}
+        copied = 0
+        for section in sections:
+            entries = install.get(section) or []
+            for entry in entries:
+                source = integration_root / entry["source"]
+                target = hermes_root / entry["target"]
+                if not source.is_file():
+                    raise SystemExit(f"Missing Hermes integration source: {source}")
+                info(f"{'Would copy' if args.dry_run else 'Copy'} {source} -> {target}")
+                if not args.dry_run:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+                copied += 1
+
+    info(f"Hermes integration {'dry run' if args.dry_run else 'installed'}: {copied} file(s)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="llm-wiki", description="LLM Wiki Forge CLI")
     parser.add_argument("--version", action="version", version="llm-wiki-forge 0.1.0")
@@ -733,6 +761,14 @@ def build_parser() -> argparse.ArgumentParser:
     repo_add.add_argument("--no-build", action="store_true", help="Only update registry/scope and sync state.")
     repo_add.add_argument("--install-requirements", action="store_true")
     repo_add.set_defaults(func=command_repo_add)
+
+    integrations = sub.add_parser("integrations", help="Manage Forge-owned runtime integration packs.")
+    integrations_sub = integrations.add_subparsers(dest="integrations_command", required=True)
+    install_hermes = integrations_sub.add_parser("install-hermes", help="Install the Forge-owned Hermes integration pack.")
+    install_hermes.add_argument("--hermes-root", default="/home/tedhsu/.hermes")
+    install_hermes.add_argument("--dry-run", action="store_true")
+    install_hermes.add_argument("--no-hook", action="store_true", help="Do not install the Slack read-only guard copy.")
+    install_hermes.set_defaults(func=command_install_hermes)
     return parser
 
 

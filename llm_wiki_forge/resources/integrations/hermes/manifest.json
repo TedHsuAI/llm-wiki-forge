@@ -1,0 +1,35 @@
+{
+  "name": "hermes-llm-wiki-integration",
+  "version": 1,
+  "description": "Forge-owned Hermes integration pack for LLM Wiki query tools, skill guidance, and Slack read-only guard rules.",
+  "install": {
+    "tools": [
+      {
+        "source": "tools/llm_wiki_query.py",
+        "target": "hermes-agent/tools/llm_wiki_query.py"
+      },
+      {
+        "source": "tools/llm_wiki_forge.py",
+        "target": "hermes-agent/tools/llm_wiki_forge.py"
+      }
+    ],
+    "skills": [
+      {
+        "source": "skills/llm-wiki-query/SKILL.md",
+        "target": "skills/llm-wiki-query/SKILL.md"
+      }
+    ],
+    "hooks": [
+      {
+        "source": "hooks/slack_readonly_guard.py",
+        "target": "agent-hooks/slack_readonly_guard.py"
+      }
+    ],
+    "tests": [
+      {
+        "source": "tests/test_llm_wiki_query_tool.py",
+        "target": "hermes-agent/tests/tools/test_llm_wiki_query_tool.py"
+      }
+    ]
+  }
+}

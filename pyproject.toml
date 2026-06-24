@@ -43,4 +43,14 @@ graphrag = [
 include = ["llm_wiki_forge*"]
 
 [tool.setuptools.package-data]
-llm_wiki_forge = ["resources/*.py", "resources/scripts/*.py", "resources/scripts/query_runtime/*.py"]
+llm_wiki_forge = [
+  "resources/*.py",
+  "resources/scripts/*.py",
+  "resources/scripts/query_runtime/*.py",
+  "resources/integrations/hermes/*.md",
+  "resources/integrations/hermes/*.json",
+  "resources/integrations/hermes/tools/*.py",
+  "resources/integrations/hermes/skills/llm-wiki-query/*.md",
+  "resources/integrations/hermes/hooks/*.py",
+  "resources/integrations/hermes/tests/*.py",
+]
