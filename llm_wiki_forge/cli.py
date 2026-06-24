@@ -8,7 +8,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from llm_wiki_forge.repo_sync import DEFAULT_SOURCE_ROOT, DEFAULT_WIKI_ROOT, read_json, require_under, write_json
+from llm_wiki_forge.repo_sync import read_json, require_under, write_json
 from llm_wiki_forge.runtime import packaged_module_available, run_packaged_module
 from llm_wiki_forge.workflows import (
     refresh_wiki_artifacts,
@@ -65,7 +65,7 @@ def infer_project_name(repo_path: Path, explicit: str | None) -> str:
 def infer_wiki_root(repo_path: Path, explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return (repo_path.parent / f"{repo_path.name}-llm-wiki").resolve()
+    raise SystemExit("--wiki-root is required")
 
 
 def has_infrastructure(wiki_root: Path) -> bool:
@@ -302,7 +302,6 @@ def command_repo_add(args: argparse.Namespace) -> None:
     repo_key = args.repo_key or repo_path.name
     wiki_path = args.wiki_path or repo_key
 
-    require_under(wiki_root, DEFAULT_WIKI_ROOT.parent, "wiki_root")
     require_under(repo_path, source_root, "repo")
     if not repo_path.exists():
         raise SystemExit(f"Repo path does not exist: {repo_path}")
@@ -492,6 +491,7 @@ def command_community_build(args: argparse.Namespace) -> None:
 
 def command_sync(args: argparse.Namespace) -> None:
     wiki_root = Path(args.wiki_root).expanduser().resolve()
+    source_root = Path(args.source_root).expanduser().resolve()
     python_path = ensure_python(wiki_root, install_requirements=True) if args.install_requirements else Path(sys.executable)
     if args.repo_key:
         exit_code = update_repo_and_refresh_wiki(
@@ -499,7 +499,7 @@ def command_sync(args: argparse.Namespace) -> None:
             repo_key=args.repo_key,
             python_path=python_path,
             config_file=args.config_file,
-            source_root=Path(args.source_root).expanduser().resolve(),
+            source_root=source_root,
             skip_fetch=args.skip_fetch,
             dry_run=args.dry_run,
             accept_baseline=args.accept_baseline,
@@ -510,6 +510,7 @@ def command_sync(args: argparse.Namespace) -> None:
         raise SystemExit("sync requires either --repo-key or --repo")
 
     repo_path = Path(args.repo).expanduser().resolve()
+    require_under(repo_path, source_root, "repo")
     project_name = infer_project_name(repo_path, args.project_name)
     print_context(repo_path, wiki_root, python_path, project_name, "sync")
     command = [
@@ -580,7 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     build = sub.add_parser("build", help="Bootstrap if needed, build one module, and validate.")
     build.add_argument("--repo", required=True, help="Source repo path.")
-    build.add_argument("--wiki-root", help="LLM Wiki root. Defaults to <repo_parent>/<repo_name>-llm-wiki.")
+    build.add_argument("--wiki-root", required=True, help="LLM Wiki root.")
     build.add_argument("--project-name", help="Module name. Defaults to repo folder name.")
     build.add_argument("--question", help="Smoke question.")
     build.add_argument("--install-requirements", action="store_true", help="Install requirements.txt into the selected Python environment when present.")
@@ -622,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--wiki-root", required=True)
     update.add_argument("--repo-key", required=True, help="Repo key from Wiki/_meta/repo_sync/repos.json.")
     update.add_argument("--config-file", default="Wiki/_meta/repo_sync/repos.json")
-    update.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    update.add_argument("--source-root", required=True)
     update.add_argument("--accept-baseline", action="store_true", default=True)
     update.add_argument("--no-accept-baseline", dest="accept_baseline", action="store_false")
     update.add_argument("--skip-fetch", action="store_true")
@@ -712,7 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--repo-key", help="Repo key from Wiki/_meta/repo_sync/repos.json.")
     sync.add_argument("--wiki-root", required=True)
     sync.add_argument("--config-file", default="Wiki/_meta/repo_sync/repos.json")
-    sync.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    sync.add_argument("--source-root", required=True)
     sync.add_argument("--project-name")
     sync.add_argument("--target-ref", default="HEAD")
     sync.add_argument("--accept-baseline", action="store_true")
@@ -723,12 +724,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     repo = sub.add_parser("repo", help="Manage source repos in a multi-repo wiki registry.")
     repo_sub = repo.add_subparsers(dest="repo_command", required=True)
-    repo_add = repo_sub.add_parser("add", help="Add or update one DispatchRawdata repo in wiki.scope.json and repo sync registry.")
-    repo_add.add_argument("--repo", required=True, help="Source repo path under DispatchRawdata.")
+    repo_add = repo_sub.add_parser("add", help="Add or update one source repo in wiki.scope.json and repo sync registry.")
+    repo_add.add_argument("--repo", required=True, help="Source repo path under --source-root.")
     repo_add.add_argument("--wiki-root", required=True)
     repo_add.add_argument("--repo-key", help="Stable repo key. Defaults to repo folder name.")
     repo_add.add_argument("--wiki-path", help="Target module/wiki logical path. Defaults to repo key.")
-    repo_add.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    repo_add.add_argument("--source-root", required=True)
     repo_add.add_argument("--tracked-branch", help="Tracked branch. Defaults to the current git branch, then main.")
     repo_add.add_argument("--schedule", help="Optional cron expression for future sync registration.")
     repo_add.add_argument("--question", help="Smoke question.")
@@ -739,7 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
     integrations = sub.add_parser("integrations", help="Manage Forge-owned runtime integration packs.")
     integrations_sub = integrations.add_subparsers(dest="integrations_command", required=True)
     install_hermes = integrations_sub.add_parser("install-hermes", help="Install the Forge-owned Hermes integration pack.")
-    install_hermes.add_argument("--hermes-root", default="/home/tedhsu/.hermes")
+    install_hermes.add_argument("--hermes-root", required=True)
     install_hermes.add_argument("--dry-run", action="store_true")
     install_hermes.add_argument("--no-hook", action="store_true", help="Do not install the Slack read-only guard copy.")
     install_hermes.set_defaults(func=command_install_hermes)

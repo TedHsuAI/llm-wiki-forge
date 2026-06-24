@@ -284,10 +284,71 @@ def extract_csharp_routes(text: str) -> list[str]:
     return routes[:40]
 
 
-def extract_retrofit_surface(text: str) -> list[str]:
+CONST_VAL_RE = re.compile(r"\bconst\s+val\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\r\n]+)")
+
+
+def kotlin_const_assignments(text: str) -> dict[str, str]:
+    return {match.group(1): match.group(2).strip() for match in CONST_VAL_RE.finditer(text)}
+
+
+def resolve_kotlin_const_expr(
+    expr: str,
+    local_constants: dict[str, str],
+    base_constants: dict[str, str],
+    seen: set[str],
+) -> str | None:
+    # ponytail: const string + identifier only; add template/function support if Android routes start using it.
+    parts: list[str] = []
+    for raw_part in expr.split("+"):
+        part = raw_part.strip()
+        string_match = re.fullmatch(r"\"([^\"]*)\"", part)
+        if string_match:
+            parts.append(string_match.group(1))
+            continue
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part):
+            if part in seen:
+                return None
+            value = (
+                resolve_kotlin_const_expr(local_constants[part], local_constants, base_constants, seen | {part})
+                if part in local_constants
+                else base_constants.get(part)
+            )
+            if value is None:
+                return None
+            parts.append(value)
+            continue
+        return None
+    return "".join(parts)
+
+
+def resolve_kotlin_string_constants(text: str, base_constants: dict[str, str] | None = None) -> dict[str, str]:
+    local_constants = kotlin_const_assignments(text)
+    constants = dict(base_constants or {})
+    for name, expr in local_constants.items():
+        value = resolve_kotlin_const_expr(expr, local_constants, constants, {name})
+        if value is not None:
+            constants[name] = value
+    return constants
+
+
+def collect_kotlin_string_constants(files: list[Path]) -> dict[str, str]:
+    constants: dict[str, str] = {}
+    for path in files:
+        if path.suffix.lower() not in {".kt", ".kts"}:
+            continue
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        constants.update(resolve_kotlin_string_constants(text, constants))
+    return constants
+
+
+def extract_retrofit_surface(text: str, base_constants: dict[str, str] | None = None) -> list[str]:
     surface = []
-    for match in re.finditer(r"@(GET|POST|PUT|DELETE|PATCH)\s*\(\s*\"([^\"]+)\"", text):
-        surface.append(f"{match.group(1)} {match.group(2)}")
+    constants = resolve_kotlin_string_constants(text, base_constants)
+    for match in re.finditer(
+        r"@(GET|POST|PUT|DELETE|PATCH)\s*\(\s*(?:\"([^\"]+)\"|([A-Za-z_][A-Za-z0-9_]*))",
+        text,
+    ):
+        surface.append(f"{match.group(1)} {match.group(2) or constants.get(match.group(3), match.group(3))}")
     return surface[:40]
 
 
@@ -329,13 +390,14 @@ def scan_sources(item: dict[str, Any], platform: str, files: list[Path]) -> tupl
     entries: list[dict[str, Any]] = []
     symbols: list[dict[str, Any]] = []
     raw_root = str(item["actualPath"])
+    kotlin_constants = collect_kotlin_string_constants(files) if platform == "android" else {}
     for path in files:
         rel = path.relative_to(scan_root)
         text = path.read_text(encoding="utf-8-sig", errors="replace")
         file_symbols = extract_symbols(text, path.suffix.lower())
         methods = extract_methods(text, path.suffix.lower())
         entry_kind = classify_entry(rel, text, file_symbols, platform)
-        routes = extract_csharp_routes(text) if platform == "csharp" else extract_retrofit_surface(text)
+        routes = extract_csharp_routes(text) if platform == "csharp" else extract_retrofit_surface(text, kotlin_constants)
         score = sum(2 for hint in ENTRY_HINTS if hint.lower() in path.name.lower())
         score += 4 if routes else 0
         score += 3 if entry_kind != "source_file" else 0
@@ -385,6 +447,8 @@ def summarize_terms(name: str, entries: list[dict[str, Any]]) -> list[str]:
             counter.update(split_words(str(symbol.get("name") or "")))
         for method in entry.get("methods") or []:
             counter.update(split_words(str(method.get("name") or "")))
+        for route in entry.get("route_surface") or []:
+            counter.update(split_words(str(route)))
     return [word for word, _ in counter.most_common(40)]
 
 
@@ -612,7 +676,9 @@ def render_module(module: dict[str, Any]) -> str:
     for entry in contract.get("entry_points", [])[:40]:
         names = ", ".join(symbol.get("name", "") for symbol in entry.get("symbols", [])[:5])
         suffix = f" - {names}" if names else ""
-        lines.append(f"- `{entry.get('file')}` ({entry.get('kind')}){suffix}")
+        routes = ", ".join(entry.get("route_surface", [])[:5])
+        route_suffix = f" routes: {routes}" if routes else ""
+        lines.append(f"- `{entry.get('file')}` ({entry.get('kind')}){suffix}{route_suffix}")
     if not contract.get("entry_points"):
         lines.append("- No entry points found.")
     lines.extend(["", "## Risk Notes", ""])

@@ -3,7 +3,56 @@
 from pathlib import Path
 
 from .code_provider import _path_from_wiki_metadata
+from .io import load_json, slugify
 from .models import ChallengeFinding, QueryRun
+
+
+def _load_scope(wiki_root: Path) -> dict:
+    scope_path = wiki_root / "wiki.scope.json"
+    if not scope_path.exists():
+        return {}
+    try:
+        return load_json(scope_path)
+    except Exception:
+        return {}
+
+
+def _graph_shard_names(module_id: str, module_name: str, graph_path: str | None) -> list[str]:
+    names: list[str] = []
+    normalized = str(graph_path or "").replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part]
+    for index, part in enumerate(parts):
+        if part == "shards" and index + 1 < len(parts):
+            names.append(parts[index + 1])
+            break
+    if module_id:
+        names.append(module_id.replace(".", "-"))
+    if module_name:
+        names.append(slugify(module_name))
+
+    unique: list[str] = []
+    for name in names:
+        if name and name not in unique:
+            unique.append(name)
+    return unique
+
+
+def _graph_json_exists(run: QueryRun, module_id: str, module_name: str, graph_path: str | None) -> bool:
+    if graph_path and _path_from_wiki_metadata(str(graph_path), run.wiki_root).exists():
+        return True
+
+    scope = _load_scope(run.wiki_root)
+    workspace_raw = (((scope.get("tooling") or {}).get("graphify") or {}).get("workspaceSubdir") or "").strip()
+    if not workspace_raw:
+        return False
+    try:
+        workspace = _path_from_wiki_metadata(workspace_raw, run.wiki_root)
+    except ValueError:
+        return False
+    for shard_name in _graph_shard_names(module_id, module_name, graph_path):
+        if (workspace / "shards" / shard_name / "graphify-out" / "graph.json").exists():
+            return True
+    return False
 
 
 def challenge_query_run(run: QueryRun) -> None:
@@ -114,7 +163,7 @@ def challenge_query_run(run: QueryRun) -> None:
                     )
                 )
         graph_path = hit.graphify.get("graph_json_path")
-        if graph_path and not _path_from_wiki_metadata(str(graph_path), run.wiki_root).exists():
+        if graph_path and not _graph_json_exists(run, hit.module_id, hit.name, str(graph_path)):
             run.challenge_findings.append(
                 ChallengeFinding(
                     severity="warning",

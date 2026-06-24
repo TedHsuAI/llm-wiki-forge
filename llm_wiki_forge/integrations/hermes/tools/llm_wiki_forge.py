@@ -5,28 +5,38 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from tools.registry import registry, tool_error, tool_result
 
 
-DEFAULT_WIKI_ROOT = Path("/home/tedhsu/.hermes/data/llm-wiki")
-DEFAULT_SOURCE_ROOT = Path("/home/tedhsu/DispatchRawdata")
-DEFAULT_PYTHON = "/home/tedhsu/.hermes/hermes-agent/venv/bin/python"
 DEFAULT_TIMEOUT_SECONDS = 900
 
 
-def _python_bin() -> str:
-    return os.environ.get("HERMES_LLM_WIKI_FORGE_PYTHON") or os.environ.get("HERMES_LLM_WIKI_PYTHON") or DEFAULT_PYTHON
+def _python_bin(args: dict[str, Any]) -> str:
+    return (
+        str(args.get("python") or "").strip()
+        or os.environ.get("HERMES_LLM_WIKI_FORGE_PYTHON")
+        or os.environ.get("HERMES_LLM_WIKI_PYTHON")
+        or sys.executable
+    )
 
 
-def _wiki_root() -> Path:
-    return Path(os.environ.get("HERMES_LLM_WIKI_ROOT", str(DEFAULT_WIKI_ROOT))).expanduser()
+def _required_path(args: dict[str, Any], field: str, env_name: str) -> Path:
+    value = str(args.get(field) or os.environ.get(env_name) or "").strip()
+    if not value:
+        raise ValueError(f"{field} is required")
+    return Path(value).expanduser()
 
 
-def _source_root() -> Path:
-    return Path(os.environ.get("HERMES_LLM_WIKI_SOURCE_ROOT", str(DEFAULT_SOURCE_ROOT))).expanduser()
+def _wiki_root(args: dict[str, Any]) -> Path:
+    return _required_path(args, "wiki_root", "HERMES_LLM_WIKI_ROOT")
+
+
+def _source_root(args: dict[str, Any]) -> Path:
+    return _required_path(args, "source_root", "HERMES_LLM_WIKI_SOURCE_ROOT")
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -38,12 +48,11 @@ def _is_under(path: Path, root: Path) -> bool:
 
 
 def _forge_available() -> bool:
-    root = _wiki_root()
-    return root.is_dir() and (root / "wiki.scope.json").is_file()
+    return True
 
 
-def _run_forge(args: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
-    command = [_python_bin(), "-m", "llm_wiki_forge", *args]
+def _run_forge(args: dict[str, Any], command_args: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
+    command = [_python_bin(args), "-m", "llm_wiki_forge", *command_args]
     completed = subprocess.run(
         command,
         capture_output=True,
@@ -72,13 +81,18 @@ def llm_wiki_forge_sync_tool(args: dict[str, Any], **_kwargs) -> str:
     repo_key = str(args.get("repo_key") or "").strip()
     if not repo_key:
         return tool_error("repo_key is required")
+    try:
+        wiki_root = _wiki_root(args)
+        source_root = _source_root(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
 
     command_args = [
         "update",
         "--wiki-root",
-        str(_wiki_root()),
+        str(wiki_root),
         "--source-root",
-        str(_source_root()),
+        str(source_root),
         "--repo-key",
         repo_key,
     ]
@@ -90,7 +104,7 @@ def llm_wiki_forge_sync_tool(args: dict[str, Any], **_kwargs) -> str:
         command_args.append("--dry-run")
 
     try:
-        result = _run_forge(command_args, timeout=int(args.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS))
+        result = _run_forge(args, command_args, timeout=int(args.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS))
     except subprocess.TimeoutExpired:
         return tool_error("llm-wiki forge sync timed out", next_action="check_cron_or_run_narrow_diagnostic")
     except Exception as exc:
@@ -115,11 +129,16 @@ def llm_wiki_forge_repo_add_tool(args: dict[str, Any], **_kwargs) -> str:
     repo = Path(str(args.get("repo") or "")).expanduser()
     if not str(repo):
         return tool_error("repo is required")
+    try:
+        wiki_root = _wiki_root(args)
+        source_root = _source_root(args)
+    except ValueError as exc:
+        return tool_error(str(exc))
     if not repo.is_absolute():
-        repo = _source_root() / repo
+        repo = source_root / repo
     repo = repo.resolve()
-    if not _is_under(repo, _source_root()):
-        return tool_error(f"repo must be under {_source_root()}: {repo}")
+    if not _is_under(repo, source_root):
+        return tool_error(f"repo must be under {source_root}: {repo}")
     if not repo.exists():
         return tool_error(f"repo does not exist: {repo}")
 
@@ -129,9 +148,9 @@ def llm_wiki_forge_repo_add_tool(args: dict[str, Any], **_kwargs) -> str:
         "--repo",
         str(repo),
         "--wiki-root",
-        str(_wiki_root()),
+        str(wiki_root),
         "--source-root",
-        str(_source_root()),
+        str(source_root),
     ]
     for field, option in (
         ("repo_key", "--repo-key"),
@@ -147,7 +166,7 @@ def llm_wiki_forge_repo_add_tool(args: dict[str, Any], **_kwargs) -> str:
         command_args.append("--no-build")
 
     try:
-        result = _run_forge(command_args, timeout=int(args.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS))
+        result = _run_forge(args, command_args, timeout=int(args.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS))
     except subprocess.TimeoutExpired:
         return tool_error("llm-wiki forge repo add timed out", next_action="inspect_partial_onboarding_outputs")
     except Exception as exc:
@@ -172,23 +191,29 @@ LLM_WIKI_FORGE_SYNC_SCHEMA = {
         "type": "object",
         "properties": {
             "repo_key": {"type": "string", "description": "Repo key from Wiki/_meta/repo_sync/repos.json."},
+            "wiki_root": {"type": "string", "description": "LLM Wiki root for this run."},
+            "source_root": {"type": "string", "description": "Source root that contains registered repos."},
+            "python": {"type": "string", "description": "Optional Python interpreter for llm_wiki_forge."},
             "accept_baseline": {"type": "boolean", "default": True},
             "skip_fetch": {"type": "boolean", "default": False},
             "dry_run": {"type": "boolean", "default": False},
             "timeout_seconds": {"type": "integer", "default": DEFAULT_TIMEOUT_SECONDS},
         },
-        "required": ["repo_key"],
+        "required": ["repo_key", "wiki_root", "source_root"],
     },
 }
 
 
 LLM_WIKI_FORGE_REPO_ADD_SCHEMA = {
     "name": "llm_wiki_forge_repo_add",
-    "description": "Add a DispatchRawdata repo to the local LLM Wiki via llm-wiki-forge repo add. Mutating maintenance tool.",
+    "description": "Add a user-provided source repo to a user-provided LLM Wiki via llm-wiki-forge repo add. Mutating maintenance tool.",
     "parameters": {
         "type": "object",
         "properties": {
-            "repo": {"type": "string", "description": "Repo path or folder name under DispatchRawdata."},
+            "repo": {"type": "string", "description": "Repo path or folder name under source_root."},
+            "wiki_root": {"type": "string", "description": "LLM Wiki root for this run."},
+            "source_root": {"type": "string", "description": "Source root that contains the repo."},
+            "python": {"type": "string", "description": "Optional Python interpreter for llm_wiki_forge."},
             "repo_key": {"type": "string"},
             "wiki_path": {"type": "string"},
             "tracked_branch": {"type": "string"},
@@ -197,7 +222,7 @@ LLM_WIKI_FORGE_REPO_ADD_SCHEMA = {
             "no_build": {"type": "boolean", "default": False},
             "timeout_seconds": {"type": "integer", "default": DEFAULT_TIMEOUT_SECONDS},
         },
-        "required": ["repo"],
+        "required": ["repo", "wiki_root", "source_root"],
     },
 }
 

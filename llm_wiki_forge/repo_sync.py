@@ -15,10 +15,6 @@ from typing import Any
 from llm_wiki_forge.runtime import run_packaged_module
 
 
-DEFAULT_SOURCE_ROOT = Path("/home/tedhsu/DispatchRawdata")
-DEFAULT_WIKI_ROOT = Path("/home/tedhsu/.hermes/data/llm-wiki")
-
-
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -590,14 +586,14 @@ def invoke_repo_sync(
     wiki_root: Path,
     repo_key: str,
     python_path: Path,
+    source_root: Path,
     config_file: str = "Wiki/_meta/repo_sync/repos.json",
-    source_root: Path = DEFAULT_SOURCE_ROOT,
     skip_fetch: bool = False,
     dry_run: bool = False,
     accept_baseline: bool = True,
 ) -> int:
     try:
-        wiki_root = require_under(wiki_root, DEFAULT_WIKI_ROOT.parent, "wiki_root")
+        wiki_root = wiki_root.expanduser().resolve()
         source_root = source_root.expanduser().resolve()
         config, _config_path = load_repo_registry(wiki_root, config_file)
         repo_entry = find_repo_entry(config, repo_key)

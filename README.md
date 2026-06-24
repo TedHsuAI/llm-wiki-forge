@@ -142,8 +142,8 @@ Use this when source git changed and the wiki needs fresh artifacts.
 
 ```bash
 llm-wiki update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --wiki-root <wiki_root> \
+  --source-root <source_root> \
   --repo-key <RepoKey>
 ```
 
@@ -151,8 +151,8 @@ Dry-run first when you only want a plan:
 
 ```bash
 llm-wiki update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --wiki-root <wiki_root> \
+  --source-root <source_root> \
   --repo-key <RepoKey> \
   --dry-run
 ```
@@ -171,7 +171,7 @@ Use this for business logic, API behavior, routing, dispatch, fare, payment, sch
 
 ```bash
 llm-wiki code query \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --question "搜車中加小費的相關邏輯?" \
   --top 5 \
   --extract-limit 4 \
@@ -194,7 +194,7 @@ When `next_action` is `run_source_search`, use deterministic source search.
 
 ```bash
 llm-wiki code source-search \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --pattern SearchTipEligibilityService \
   --limit 20 \
   --json
@@ -204,9 +204,9 @@ llm-wiki code source-search \
 
 ```bash
 llm-wiki repo add \
-  --repo /home/tedhsu/DispatchRawdata/<RepoName> \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --repo <source_root>/<RepoName> \
+  --wiki-root <wiki_root> \
+  --source-root <source_root> \
   --repo-key <RepoKey> \
   --wiki-path <WikiPath>
 ```
@@ -217,11 +217,7 @@ llm-wiki repo add \
 llm-wiki build --repo <repo_path> --wiki-root <wiki_root>
 ```
 
-If `--wiki-root` is omitted, Forge defaults to:
-
-```text
-<repo_parent>/<repo_name>-llm-wiki
-```
+Forge does not infer source or wiki roots; pass the paths for the current machine.
 
 ## Hermes Integration
 
@@ -229,18 +225,18 @@ Install the Forge-owned Hermes integration pack:
 
 ```bash
 python -m llm_wiki_forge integrations install-hermes \
-  --hermes-root /home/tedhsu/.hermes \
+  --hermes-root <hermes_root> \
   --dry-run
 
 python -m llm_wiki_forge integrations install-hermes \
-  --hermes-root /home/tedhsu/.hermes
+  --hermes-root <hermes_root>
 ```
 
 Use `--no-hook` when you only want tool, skill, and test files:
 
 ```bash
 python -m llm_wiki_forge integrations install-hermes \
-  --hermes-root /home/tedhsu/.hermes \
+  --hermes-root <hermes_root> \
   --no-hook
 ```
 
@@ -306,21 +302,21 @@ For local development:
 ```bash
 python -m compileall llm_wiki_forge
 python -m pytest tests -q
-python -m llm_wiki_forge integrations install-hermes --hermes-root /home/tedhsu/.hermes --dry-run
+python -m llm_wiki_forge integrations install-hermes --hermes-root <hermes_root> --dry-run
 ```
 
 For query smoke tests:
 
 ```bash
 python -m llm_wiki_forge code query \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --question "固定車資怎麼算" \
   --top 3 \
   --extract-limit 2 \
   --json
 
 python -m llm_wiki_forge code source-search \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --pattern JobTraState \
   --limit 1 \
   --json

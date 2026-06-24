@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_wiki_forge.query_adapter import llm_wiki_query_tool, llm_wiki_source_search_tool
-from llm_wiki_forge.repo_sync import DEFAULT_SOURCE_ROOT, invoke_repo_sync
+from llm_wiki_forge.repo_sync import invoke_repo_sync
 from llm_wiki_forge.runtime import packaged_module_available, run_packaged_module
 
 
@@ -135,8 +135,8 @@ def update_repo_and_refresh_wiki(
     wiki_root: Path,
     repo_key: str,
     python_path: Path,
+    source_root: Path,
     config_file: str = "Wiki/_meta/repo_sync/repos.json",
-    source_root: Path = DEFAULT_SOURCE_ROOT,
     skip_fetch: bool = False,
     dry_run: bool = False,
     accept_baseline: bool = True,

@@ -536,20 +536,16 @@ The following subsections cover the full LLM Wiki lifecycle: onboarding, sync, i
 
 ## Subsection: Module Onboarding
 
-Use when a repo should be explicitly added to the shared local LLM Wiki. The implementation entrypoint is `llm-wiki-forge`; do not edit `wiki.scope.json` by hand unless repairing a failed Forge run.
+Use when a repo should be explicitly added to an LLM Wiki. The implementation entrypoint is `llm-wiki-forge`; do not edit `wiki.scope.json` by hand unless repairing a failed Forge run.
 
-### Canonical Local Contract
-
-```text
-source root: /home/tedhsu/DispatchRawdata
-wiki root: /home/tedhsu/.hermes/data/llm-wiki
-repo registry: Wiki/_meta/repo_sync/repos.json
-python: /home/tedhsu/.hermes/hermes-agent/venv/bin/python
-```
+No source or wiki path is canonical. Use the paths provided by the user or the active Hermes environment for this run.
 
 ### Required Inputs
 
-- `repo`: folder name under `/home/tedhsu/DispatchRawdata` or an absolute path under that root
+- `repo`: source repo path provided by the user
+- `source_root`: parent/root that the repo must stay under
+- `wiki_root`: LLM Wiki root provided by the user
+- `python`: current Hermes/Forge Python or user-provided interpreter
 - `repo_key`: stable registry key; default to repo folder name
 - `wiki_path`: target module logical name; default to `repo_key`
 - `tracked_branch`: default to the repo's current branch
@@ -559,10 +555,10 @@ python: /home/tedhsu/.hermes/hermes-agent/venv/bin/python
 ### Primary Command
 
 ```bash
-/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge repo add \
-  --repo /home/tedhsu/DispatchRawdata/<RepoName> \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+<python> -m llm_wiki_forge repo add \
+  --repo "<repo>" \
+  --wiki-root "<wiki_root>" \
+  --source-root "<source_root>" \
   --repo-key "<repoKey>" \
   --wiki-path "<wikiPath>"
 ```
@@ -571,7 +567,7 @@ Add `--schedule "<cron>"` only when the repo should also be registered for futur
 
 ### What Forge Must Do
 
-- validate repo path stays under `/home/tedhsu/DispatchRawdata`
+- validate repo path stays under the provided `source_root`
 - update exactly one repo entry in `wiki.scope.json`
 - update exactly one repo entry in `Wiki/_meta/repo_sync/repos.json`
 - run scope/module/community/query validation unless `--no-build` is supplied
@@ -594,7 +590,7 @@ Onboarding is complete only when:
 ### Failure Rules
 
 - Stop after a failed Forge command; inspect stdout/stderr and report the failed gate.
-- Do not add path hacks outside `DispatchRawdata`.
+- Do not substitute local-machine default paths for missing user inputs.
 - Do not hand-edit generated JSON/Markdown as the only durable fix.
 - Do not initialize or accept baseline before smoke evidence is acceptable unless the user explicitly accepts the risk.
 
@@ -607,9 +603,9 @@ Use for durable LLM Wiki maintenance from source git changes. Build/sync/onboard
 For a registered repo, run:
 
 ```bash
-/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+<python> -m llm_wiki_forge update \
+  --wiki-root "<wiki_root>" \
+  --source-root "<source_root>" \
   --repo-key "<repoKey>"
 ```
 
