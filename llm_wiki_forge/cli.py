@@ -9,8 +9,15 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from llm_wiki_forge.repo_sync import DEFAULT_SOURCE_ROOT, DEFAULT_WIKI_ROOT, invoke_repo_sync, read_json, require_under, write_json
+from llm_wiki_forge.repo_sync import DEFAULT_SOURCE_ROOT, DEFAULT_WIKI_ROOT, read_json, require_under, write_json
 from llm_wiki_forge.runtime import packaged_module_available, run_packaged_module
+from llm_wiki_forge.workflows import (
+    refresh_wiki_artifacts,
+    run_code_query,
+    run_code_source_search,
+    update_repo_and_refresh_wiki,
+    workflow_summary,
+)
 
 
 def info(message: str) -> None:
@@ -154,8 +161,15 @@ def run_onboarding_steps(
     project_name: str,
     smoke_question: str | None = None,
 ) -> None:
-    run_wiki_command(wiki_root, python_path, "scripts.update_wiki", "--wiki-root", str(wiki_root))
-    run_wiki_command(wiki_root, python_path, "scripts.generate_module_wiki", "--wiki-root", str(wiki_root))
+    refresh_wiki_artifacts(
+        wiki_root=wiki_root,
+        python_path=python_path,
+        repo=project_name,
+        question=smoke_question,
+    )
+
+
+def run_community_build(wiki_root: Path, python_path: Path, top_per_module: int) -> None:
     run_wiki_command(
         wiki_root,
         python_path,
@@ -163,22 +177,7 @@ def run_onboarding_steps(
         "--wiki-root",
         str(wiki_root),
         "--top-per-module",
-        "10",
-    )
-    question = smoke_question or f"What is the main responsibility of {project_name}?"
-    run_wiki_command(
-        wiki_root,
-        python_path,
-        "scripts.query_runtime.graph_runtime",
-        "--wiki-root",
-        str(wiki_root),
-        "--question",
-        question,
-        "--top",
-        "5",
-        "--extract",
-        "--extract-limit",
-        "4",
+        str(top_per_module),
     )
 
 
@@ -429,27 +428,32 @@ def command_validate(args: argparse.Namespace) -> None:
 def command_backfill(args: argparse.Namespace) -> None:
     wiki_root = Path(args.wiki_root).expanduser().resolve()
     python_path = ensure_python(wiki_root, install_requirements=args.install_requirements)
-    print_context(None, wiki_root, python_path, args.repo, "backfill")
-    run_onboarding_steps(wiki_root, python_path, args.repo, args.question)
+    print_context(None, wiki_root, python_path, args.repo, "refresh")
+    steps = refresh_wiki_artifacts(
+        wiki_root=wiki_root,
+        python_path=python_path,
+        repo=args.repo,
+        question=args.question,
+        community_top_per_module=getattr(args, "top_per_module", 10),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(workflow_summary(steps), ensure_ascii=False, indent=2))
     info("Verdict: PASS")
 
 
 def command_query(args: argparse.Namespace) -> None:
     wiki_root = Path(args.wiki_root).expanduser().resolve()
     python_path = ensure_python(wiki_root, install_requirements=True) if args.install_requirements else Path(sys.executable)
-    runtime_args = [
-        "--wiki-root",
-        str(wiki_root),
-        "--question",
-        args.question,
-        "--top",
-        str(args.top),
-        "--extract-limit",
-        str(args.extract_limit),
-    ]
-    if args.json:
-        runtime_args.append("--json")
-    run_wiki_command(wiki_root, python_path, "scripts.query_runtime.query_orchestrator", *runtime_args)
+    raise SystemExit(
+        run_code_query(
+            wiki_root=wiki_root,
+            python_path=python_path,
+            question=args.question,
+            top=args.top,
+            extract_limit=args.extract_limit,
+            json_output=args.json,
+        )
+    )
 
 
 def command_graph(args: argparse.Namespace) -> None:
@@ -473,18 +477,18 @@ def command_graph(args: argparse.Namespace) -> None:
 def command_source_search(args: argparse.Namespace) -> None:
     wiki_root = Path(args.wiki_root).expanduser().resolve()
     python_path = ensure_python(wiki_root, install_requirements=True) if args.install_requirements else Path(sys.executable)
-    runtime_args = ["--wiki-root", str(wiki_root), "--limit", str(args.limit)]
-    for pattern in args.pattern:
-        runtime_args.extend(["--pattern", pattern])
-    for root in args.root or []:
-        runtime_args.extend(["--root", root])
-    if args.regex:
-        runtime_args.append("--regex")
-    if args.include_sql:
-        runtime_args.append("--include-sql")
-    if args.json:
-        runtime_args.append("--json")
-    run_wiki_command(wiki_root, python_path, "scripts.query_runtime.source_search", *runtime_args)
+    raise SystemExit(
+        run_code_source_search(
+            wiki_root=wiki_root,
+            python_path=python_path,
+            patterns=args.pattern,
+            roots=args.root or [],
+            limit=args.limit,
+            regex=args.regex,
+            include_sql=args.include_sql,
+            json_output=args.json,
+        )
+    )
 
 
 def command_eval(args: argparse.Namespace) -> None:
@@ -504,22 +508,14 @@ def command_eval(args: argparse.Namespace) -> None:
 def command_community_build(args: argparse.Namespace) -> None:
     wiki_root = Path(args.wiki_root).expanduser().resolve()
     python_path = ensure_python(wiki_root, install_requirements=True) if args.install_requirements else Path(sys.executable)
-    run_wiki_command(
-        wiki_root,
-        python_path,
-        "scripts.query_runtime.community_builder",
-        "--wiki-root",
-        str(wiki_root),
-        "--top-per-module",
-        str(args.top_per_module),
-    )
+    run_community_build(wiki_root, python_path, args.top_per_module)
 
 
 def command_sync(args: argparse.Namespace) -> None:
     wiki_root = Path(args.wiki_root).expanduser().resolve()
     python_path = ensure_python(wiki_root, install_requirements=True) if args.install_requirements else Path(sys.executable)
     if args.repo_key:
-        exit_code = invoke_repo_sync(
+        exit_code = update_repo_and_refresh_wiki(
             wiki_root=wiki_root,
             repo_key=args.repo_key,
             python_path=python_path,
@@ -550,6 +546,24 @@ def command_sync(args: argparse.Namespace) -> None:
     if args.accept_baseline:
         command.append("--accept-baseline")
     run_wiki_command(wiki_root, python_path, "scripts.repo_sync.diff_wiki", *command)
+
+
+def command_update(args: argparse.Namespace) -> None:
+    wiki_root = Path(args.wiki_root).expanduser().resolve()
+    python_path = ensure_python(wiki_root, install_requirements=args.install_requirements)
+    print_context(None, wiki_root, python_path, args.repo_key, "update")
+    raise SystemExit(
+        update_repo_and_refresh_wiki(
+            wiki_root=wiki_root,
+            repo_key=args.repo_key,
+            python_path=python_path,
+            config_file=args.config_file,
+            source_root=Path(args.source_root).expanduser().resolve(),
+            skip_fetch=args.skip_fetch,
+            dry_run=args.dry_run,
+            accept_baseline=args.accept_baseline,
+        )
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -583,8 +597,31 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--wiki-root", required=True)
     backfill.add_argument("--repo", required=True)
     backfill.add_argument("--question", help="Smoke question.")
+    backfill.add_argument("--top-per-module", type=int, default=10)
+    backfill.add_argument("--json", action="store_true", help="Print a compact workflow summary.")
     backfill.add_argument("--install-requirements", action="store_true")
     backfill.set_defaults(func=command_backfill)
+
+    refresh = sub.add_parser("refresh", help="Forge-owned alias for refreshing wiki artifacts for one repo.")
+    refresh.add_argument("--wiki-root", required=True)
+    refresh.add_argument("--repo", required=True)
+    refresh.add_argument("--question", help="Smoke question.")
+    refresh.add_argument("--top-per-module", type=int, default=10)
+    refresh.add_argument("--json", action="store_true", help="Print a compact workflow summary.")
+    refresh.add_argument("--install-requirements", action="store_true")
+    refresh.set_defaults(func=command_backfill)
+
+    update = sub.add_parser("update", help="Update a registered repo and refresh wiki artifacts through Forge.")
+    update.add_argument("--wiki-root", required=True)
+    update.add_argument("--repo-key", required=True, help="Repo key from Wiki/_meta/repo_sync/repos.json.")
+    update.add_argument("--config-file", default="Wiki/_meta/repo_sync/repos.json")
+    update.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    update.add_argument("--accept-baseline", action="store_true", default=True)
+    update.add_argument("--no-accept-baseline", dest="accept_baseline", action="store_false")
+    update.add_argument("--skip-fetch", action="store_true")
+    update.add_argument("--dry-run", action="store_true")
+    update.add_argument("--install-requirements", action="store_true")
+    update.set_defaults(func=command_update)
 
     query = sub.add_parser("query", help="Run the packaged query orchestrator.")
     query.add_argument("--wiki-root", required=True)
@@ -614,6 +651,28 @@ def build_parser() -> argparse.ArgumentParser:
     source_search.add_argument("--json", action="store_true")
     source_search.add_argument("--install-requirements", action="store_true")
     source_search.set_defaults(func=command_source_search)
+
+    code = sub.add_parser("code", help="Forge-owned code evidence query commands.")
+    code_sub = code.add_subparsers(dest="code_command", required=True)
+    code_query = code_sub.add_parser("query", help="Run the code query orchestrator.")
+    code_query.add_argument("--wiki-root", required=True)
+    code_query.add_argument("--question", required=True)
+    code_query.add_argument("--top", type=int, default=5)
+    code_query.add_argument("--extract-limit", type=int, default=4)
+    code_query.add_argument("--json", action="store_true")
+    code_query.add_argument("--install-requirements", action="store_true")
+    code_query.set_defaults(func=command_query)
+
+    code_source_search = code_sub.add_parser("source-search", help="Run deterministic source search.")
+    code_source_search.add_argument("--wiki-root", required=True)
+    code_source_search.add_argument("--pattern", action="append", required=True)
+    code_source_search.add_argument("--root", action="append", default=[])
+    code_source_search.add_argument("--limit", type=int, default=20)
+    code_source_search.add_argument("--regex", action="store_true")
+    code_source_search.add_argument("--include-sql", action="store_true")
+    code_source_search.add_argument("--json", action="store_true")
+    code_source_search.add_argument("--install-requirements", action="store_true")
+    code_source_search.set_defaults(func=command_source_search)
 
     eval_cmd = sub.add_parser("eval", help="Run packaged query runtime evaluation.")
     eval_cmd.add_argument("--wiki-root", required=True)

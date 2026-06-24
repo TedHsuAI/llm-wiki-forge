@@ -24,14 +24,13 @@ The wiki root may still contain `scripts/query_runtime` during the transitional 
 For a registered repo, run:
 
 ```bash
-/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge sync \
+/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge update \
   --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
   --source-root /home/tedhsu/DispatchRawdata \
-  --repo-key "<repoKey>" \
-  --accept-baseline
+  --repo-key "<repoKey>"
 ```
 
-Use `--dry-run` for diagnostics and `--skip-fetch` only when intentionally avoiding network/git remote checks.
+`update` is the Forge-owned boundary for "update repo, refresh wiki, and record reports." It accepts the baseline after a successful non-empty sync by default; add `--no-accept-baseline` only when you want to inspect reports before updating sync state. Use `--dry-run` for diagnostics and `--skip-fetch` only when intentionally avoiding network/git remote checks.
 
 ## Result Semantics
 
@@ -61,13 +60,13 @@ rg -n "<repo_or_module>|owns|not_owns|business_terms|misleading_terms|entry_symb
   /home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/modules \
   /home/tedhsu/.hermes/data/llm-wiki/Wiki/01_Modules
 
-/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge graph \
+/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code query \
   --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
   --question "<repo_name> 的主要責任是什麼？" \
-  --top 5 --extract --extract-limit 4
+  --top 5 --extract-limit 4
 ```
 
-`llm_wiki_forge graph` is the diagnostic query fallback; do not call legacy wiki-root runtime modules directly.
+`llm_wiki_forge code query` is the diagnostic query fallback; do not call legacy wiki-root runtime modules directly.
 
 ## Escalation
 

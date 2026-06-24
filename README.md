@@ -92,6 +92,30 @@ Refresh artifacts for one existing repo:
 llm-wiki backfill --wiki-root <wiki_root> --repo <repo_name>
 ```
 
+Forge-owned correctness workflows:
+
+```bash
+# Update a registered source repo, refresh wiki artifacts, and write sync reports.
+llm-wiki update \
+  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --source-root /home/tedhsu/DispatchRawdata \
+  --repo-key <RepoKey>
+
+# Refresh generated wiki artifacts without updating git.
+llm-wiki refresh --wiki-root <wiki_root> --repo <repo_name>
+
+# Query code behavior through the packaged orchestrator.
+llm-wiki code query --wiki-root <wiki_root> --question "<question>" --json
+
+# Verify exact code evidence with deterministic source search.
+llm-wiki code source-search --wiki-root <wiki_root> --pattern "<identifier>" --limit 20 --json
+```
+
+`sync`, `backfill`, `query`, and `source-search` remain compatible entrypoints,
+but new adapters should prefer `update`, `refresh`, and `code ...` because those
+names match the Forge-owned responsibility boundary: repo update, wiki refresh,
+and code evidence query.
+
 Create or update repo sync state:
 
 ```bash
@@ -322,6 +346,29 @@ llm-wiki validate --wiki-root <wiki_root> --repo <repo_name>
 ```bash
 llm-wiki backfill --wiki-root <wiki_root> --repo <repo_name>
 ```
+
+Forge-owned 正確性流程：
+
+```bash
+# 更新已註冊的 source repo、刷新 Wiki artifacts，並寫入 sync reports。
+llm-wiki update \
+  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --source-root /home/tedhsu/DispatchRawdata \
+  --repo-key <RepoKey>
+
+# 不更新 git，只刷新既有 Wiki artifacts。
+llm-wiki refresh --wiki-root <wiki_root> --repo <repo_name>
+
+# 透過 packaged orchestrator 查詢程式碼行為。
+llm-wiki code query --wiki-root <wiki_root> --question "<question>" --json
+
+# 用 deterministic source search 驗證精確程式碼證據。
+llm-wiki code source-search --wiki-root <wiki_root> --pattern "<identifier>" --limit 20 --json
+```
+
+`sync`、`backfill`、`query`、`source-search` 仍保留相容，但新的 adapter
+應優先使用 `update`、`refresh`、`code ...`。這三個名稱對應 Forge 擁有的
+責任邊界：repo update、wiki refresh、code evidence query。
 
 建立或更新 repo sync state：
 

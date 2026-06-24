@@ -39,11 +39,10 @@ Verify:
 ```text
 <wiki_root>/wiki.scope.json exists
 <wiki_root>/Wiki/_data/scope.inventory.json exists
-<wiki_root>/scripts exists
 <python_command> --version succeeds
 ```
 
-If a required Python entrypoint is missing, inspect the local toolkit and adapt to its current entrypoint. Do not invent a parallel pipeline.
+If a required Forge entrypoint is missing, inspect the local toolkit and adapt to its current entrypoint. Do not invent a parallel pipeline.
 
 ## Workflow
 
@@ -100,7 +99,7 @@ If coverage is sparse, add durable extraction seeds through repo/module overlay 
 Run the smallest Python rebuild command that refreshes this repo's module metadata. Example:
 
 ```bash
-<python_command> -m scripts.generate_module_wiki --wiki-root "<wiki_root>"
+<python_command> -m llm_wiki_forge refresh --wiki-root "<wiki_root>" --repo "<repo_name>"
 ```
 
 Validate that the repo's module JSON/Markdown still exists, that curated overlay semantics are inlined when overlays are present, and that the rebuild did not regress unrelated repo paths.
@@ -110,7 +109,7 @@ Validate that the repo's module JSON/Markdown still exists, that curated overlay
 Run:
 
 ```bash
-<python_command> -m llm_wiki_forge community build --wiki-root "<wiki_root>" --top-per-module 10
+<python_command> -m llm_wiki_forge refresh --wiki-root "<wiki_root>" --repo "<repo_name>" --top-per-module 10
 ```
 
 Inspect repo-related communities for useful business/system clusters and vendor/generated noise. If graph/community dependencies are unavailable, require explicit degraded fallback communities with `source` / `degraded` markers instead of silently reusing stale JSON.
@@ -128,7 +127,7 @@ Use user questions first. Otherwise use:
 Run:
 
 ```bash
-<python_command> -m llm_wiki_forge graph --wiki-root "<wiki_root>" --question "<question>" --top 5 --extract --extract-limit 4
+<python_command> -m llm_wiki_forge code query --wiki-root "<wiki_root>" --question "<question>" --top 5 --extract-limit 4 --json
 ```
 
 Open the newest `Wiki/_data/query_runs` JSON. Passing evidence needs selected/rejected module rationale when available, exact files/symbols for implementation questions, convergence after fallback, and community metadata that distinguishes graph-backed hits from degraded fallback hits.
