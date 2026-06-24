@@ -111,6 +111,12 @@ llm-wiki code query --wiki-root <wiki_root> --question "<question>" --json
 llm-wiki code source-search --wiki-root <wiki_root> --pattern "<identifier>" --limit 20 --json
 ```
 
+When `--json` is supplied, `code query` and `code source-search` return the same
+Hermes-compatible compact/full payload shape used by the current
+`llm_wiki_query` and `llm_wiki_source_search` tools, including recent evidence
+reuse, freshness validation, shard summaries, compact snippets, next actions,
+and source-search limit policy.
+
 `sync`, `backfill`, `query`, and `source-search` remain compatible entrypoints,
 but new adapters should prefer `update`, `refresh`, and `code ...` because those
 names match the Forge-owned responsibility boundary: repo update, wiki refresh,
@@ -365,6 +371,11 @@ llm-wiki code query --wiki-root <wiki_root> --question "<question>" --json
 # 用 deterministic source search 驗證精確程式碼證據。
 llm-wiki code source-search --wiki-root <wiki_root> --pattern "<identifier>" --limit 20 --json
 ```
+
+帶 `--json` 時，`code query` 與 `code source-search` 會輸出目前 Hermes
+`llm_wiki_query` / `llm_wiki_source_search` tool 使用的 compact/full payload
+格式，包含近期 evidence reuse、freshness validation、shard summary、
+compact snippets、next action、以及 source-search limit policy。
 
 `sync`、`backfill`、`query`、`source-search` 仍保留相容，但新的 adapter
 應優先使用 `update`、`refresh`、`code ...`。這三個名稱對應 Forge 擁有的

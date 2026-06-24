@@ -452,6 +452,10 @@ def command_query(args: argparse.Namespace) -> None:
             top=args.top,
             extract_limit=args.extract_limit,
             json_output=args.json,
+            detail=args.detail,
+            reuse_recent=args.reuse_recent,
+            reuse_days=args.reuse_days,
+            max_shards=args.max_shards,
         )
     )
 
@@ -487,6 +491,7 @@ def command_source_search(args: argparse.Namespace) -> None:
             regex=args.regex,
             include_sql=args.include_sql,
             json_output=args.json,
+            detail=args.detail,
         )
     )
 
@@ -629,6 +634,11 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--top", type=int, default=5)
     query.add_argument("--extract-limit", type=int, default=4)
     query.add_argument("--json", action="store_true")
+    query.add_argument("--detail", choices=["compact", "full"], default="compact")
+    query.add_argument("--reuse-recent", dest="reuse_recent", action="store_true", default=True)
+    query.add_argument("--no-reuse-recent", dest="reuse_recent", action="store_false")
+    query.add_argument("--reuse-days", type=int, default=7)
+    query.add_argument("--max-shards", type=int, default=3)
     query.add_argument("--install-requirements", action="store_true")
     query.set_defaults(func=command_query)
 
@@ -649,6 +659,7 @@ def build_parser() -> argparse.ArgumentParser:
     source_search.add_argument("--regex", action="store_true")
     source_search.add_argument("--include-sql", action="store_true")
     source_search.add_argument("--json", action="store_true")
+    source_search.add_argument("--detail", choices=["compact", "full"], default="compact")
     source_search.add_argument("--install-requirements", action="store_true")
     source_search.set_defaults(func=command_source_search)
 
@@ -660,6 +671,11 @@ def build_parser() -> argparse.ArgumentParser:
     code_query.add_argument("--top", type=int, default=5)
     code_query.add_argument("--extract-limit", type=int, default=4)
     code_query.add_argument("--json", action="store_true")
+    code_query.add_argument("--detail", choices=["compact", "full"], default="compact")
+    code_query.add_argument("--reuse-recent", dest="reuse_recent", action="store_true", default=True)
+    code_query.add_argument("--no-reuse-recent", dest="reuse_recent", action="store_false")
+    code_query.add_argument("--reuse-days", type=int, default=7)
+    code_query.add_argument("--max-shards", type=int, default=3)
     code_query.add_argument("--install-requirements", action="store_true")
     code_query.set_defaults(func=command_query)
 
@@ -671,6 +687,7 @@ def build_parser() -> argparse.ArgumentParser:
     code_source_search.add_argument("--regex", action="store_true")
     code_source_search.add_argument("--include-sql", action="store_true")
     code_source_search.add_argument("--json", action="store_true")
+    code_source_search.add_argument("--detail", choices=["compact", "full"], default="compact")
     code_source_search.add_argument("--install-requirements", action="store_true")
     code_source_search.set_defaults(func=command_source_search)
 

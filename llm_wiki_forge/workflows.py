@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import subprocess
+import os
+import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from llm_wiki_forge.query_adapter import llm_wiki_query_tool, llm_wiki_source_search_tool
 from llm_wiki_forge.repo_sync import DEFAULT_SOURCE_ROOT, invoke_repo_sync
 from llm_wiki_forge.runtime import packaged_module_available, run_packaged_module
 
@@ -15,6 +19,24 @@ class ModuleStep:
     module: str
     args: list[str]
     exit_code: int
+
+
+@contextmanager
+def _query_env(wiki_root: Path, python_path: Path):
+    keys = {
+        "HERMES_LLM_WIKI_ROOT": str(wiki_root),
+        "HERMES_LLM_WIKI_PYTHON": str(python_path),
+    }
+    previous = {key: os.environ.get(key) for key in keys}
+    os.environ.update(keys)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def run_runtime_module(
@@ -141,26 +163,49 @@ def run_code_query(
     top: int = 5,
     extract_limit: int = 4,
     json_output: bool = False,
+    detail: str = "compact",
+    reuse_recent: bool = True,
+    reuse_days: int = 7,
+    max_shards: int = 3,
 ) -> int:
-    """Run the Forge-owned code query orchestrator."""
+    """Run the Forge-owned code query path with Hermes-compatible shaping."""
 
-    args = [
-        "--wiki-root",
-        str(wiki_root),
-        "--question",
-        question,
-        "--top",
-        str(top),
-        "--extract-limit",
-        str(extract_limit),
-    ]
     if json_output:
-        args.append("--json")
+        with _query_env(wiki_root, python_path):
+            result = llm_wiki_query_tool(
+                {
+                    "question": question,
+                    "top": top,
+                    "extract_limit": extract_limit,
+                    "detail": detail,
+                    "reuse_recent": reuse_recent,
+                    "reuse_days": reuse_days,
+                    "max_shards": max_shards,
+                }
+            )
+            print(result)
+            try:
+                payload = json.loads(result)
+            except json.JSONDecodeError:
+                payload = {}
+            if payload.get("error"):
+                return 1
+        return 0
+
     return run_runtime_module(
         wiki_root=wiki_root,
         python_path=python_path,
         module="scripts.query_runtime.query_orchestrator",
-        args=args,
+        args=[
+            "--wiki-root",
+            str(wiki_root),
+            "--question",
+            question,
+            "--top",
+            str(top),
+            "--extract-limit",
+            str(extract_limit),
+        ],
     ).returncode
 
 
@@ -174,8 +219,28 @@ def run_code_source_search(
     regex: bool = False,
     include_sql: bool = False,
     json_output: bool = False,
+    detail: str = "compact",
 ) -> int:
     """Run deterministic Forge-owned source search for exact code evidence."""
+
+    if json_output and not regex and not include_sql and len(patterns) == 1:
+        with _query_env(wiki_root, python_path):
+            result = llm_wiki_source_search_tool(
+                {
+                    "pattern": patterns[0],
+                    "root": (roots or [""])[0] if roots else "",
+                    "limit": limit,
+                    "detail": detail,
+                }
+            )
+            print(result)
+            try:
+                payload = json.loads(result)
+            except json.JSONDecodeError:
+                payload = {}
+            if payload.get("error"):
+                return 1
+        return 0
 
     args = ["--wiki-root", str(wiki_root), "--limit", str(limit)]
     for pattern in patterns:
