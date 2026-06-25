@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llm-wiki-forge"
 version = "0.1.0"
-description = "Skills and a CLI for building and querying LLM Wiki artifacts from .NET and Android repositories."
+description = "Skills and a CLI for building and querying LLM Wiki artifacts from .NET, Android, and iOS repositories."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
   { name = "LLM Wiki Forge contributors" }
 ]
-keywords = ["llm", "wiki", "csharp", "dotnet", "android", "ai-skills", "code-intelligence"]
+keywords = ["llm", "wiki", "csharp", "dotnet", "android", "ios", "swift", "objective-c", "ai-skills", "code-intelligence"]
 dependencies = [
   "graphifyy>=0.4.10,<0.9",
   "langgraph>=0.2",
@@ -19,6 +19,8 @@ dependencies = [
   "tree-sitter-c-sharp>=0.21",
   "tree-sitter-kotlin>=1.0",
   "tree-sitter-java>=0.21",
+  "tree-sitter-swift>=0.7.3",
+  "tree-sitter-objc>=3.0.2",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

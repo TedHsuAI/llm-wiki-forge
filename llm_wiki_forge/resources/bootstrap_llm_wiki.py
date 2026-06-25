@@ -69,8 +69,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SKIP_DIRS = {".git", ".gradle", ".idea", ".vs", "bin", "build", "coverage", "obj", "node_modules", "packages", "TestResults"}
+SKIP_DIRS = {".git", ".gradle", ".idea", ".vs", ".build", "bin", "build", "carthage", "coverage", "deriveddata", "obj", "node_modules", "packages", "pods", "testresults"}
 PROJECT_EXTENSIONS = {".csproj"}
+IOS_CODE_EXTENSIONS = {".swift", ".m", ".mm", ".h"}
+IOS_PROJECT_EXTENSIONS = {".xcodeproj", ".xcworkspace"}
+IOS_GENERATED_PART_SUFFIXES = (".xcassets", ".xcframework", ".framework", ".swiftmodule")
 
 
 def now_iso() -> str:
@@ -92,7 +95,7 @@ def resolve_path(root: Path, scope: dict, raw: str) -> Path:
 
 
 def should_skip(path: Path) -> bool:
-    return any(part in SKIP_DIRS for part in path.parts)
+    return any(part.lower() in SKIP_DIRS or part.lower().endswith(IOS_GENERATED_PART_SUFFIXES) for part in path.parts)
 
 
 def is_under_any(path: Path, roots: list[Path]) -> bool:
@@ -177,6 +180,23 @@ def count_csharp_files(path: Path, active_projects: list[Path], enforce_project_
     return csharp_count, skipped_csharp_count
 
 
+def count_ios_files(path: Path) -> tuple[int, int]:
+    scan_root = path.parent if path.is_file() else path
+    swift_count = 0
+    objc_count = 0
+    if not scan_root.exists():
+        return swift_count, objc_count
+    for item in scan_root.rglob("*"):
+        if not item.is_file() or should_skip(item):
+            continue
+        suffix = item.suffix.lower()
+        if suffix == ".swift":
+            swift_count += 1
+        elif suffix in {".m", ".mm", ".h"}:
+            objc_count += 1
+    return swift_count, objc_count
+
+
 def discover_source(path: Path) -> dict:
     if not path.exists():
         return {
@@ -189,8 +209,14 @@ def discover_source(path: Path) -> dict:
             "projectScopeSource": "missing",
             "csharpFiles": 0,
             "skippedCsharpFiles": 0,
+            "iosFiles": 0,
+            "objectiveCFiles": 0,
+            "xcodeProjectFiles": [],
+            "xcodeWorkspaceFiles": [],
         }
     all_project_files: list[Path] = []
+    xcode_project_files: list[Path] = []
+    xcode_workspace_files: list[Path] = []
     solution_files: list[Path] = []
     solution_filter_files: list[Path] = []
     scan_root = path.parent if path.is_file() else path
@@ -200,6 +226,10 @@ def discover_source(path: Path) -> dict:
             continue
         if item.is_file() and item.suffix.lower() in PROJECT_EXTENSIONS:
             all_project_files.append(item.resolve())
+        elif item.is_dir() and item.suffix.lower() == ".xcodeproj":
+            xcode_project_files.append(item.resolve())
+        elif item.is_dir() and item.suffix.lower() == ".xcworkspace":
+            xcode_workspace_files.append(item.resolve())
         elif item.is_file() and item.suffix.lower() == ".sln":
             solution_files.append(item.resolve())
         elif item.is_file() and item.suffix.lower() == ".slnf":
@@ -232,6 +262,7 @@ def discover_source(path: Path) -> dict:
     active_existing = [project for project in active_projects if project.exists()]
     enforce_project_scope = project_scope_source in {"solution_filter", "solution"} and bool(active_existing)
     csharp_count, skipped_csharp_count = count_csharp_files(path, active_existing, enforce_project_scope)
+    ios_count, objc_count = count_ios_files(path)
     return {
         "exists": True,
         "projectFiles": sorted_paths(active_existing),
@@ -242,6 +273,10 @@ def discover_source(path: Path) -> dict:
         "projectScopeSource": project_scope_source,
         "csharpFiles": csharp_count,
         "skippedCsharpFiles": skipped_csharp_count,
+        "iosFiles": ios_count,
+        "objectiveCFiles": objc_count,
+        "xcodeProjectFiles": sorted_paths(xcode_project_files),
+        "xcodeWorkspaceFiles": sorted_paths(xcode_workspace_files),
     }
 
 
@@ -291,6 +326,10 @@ def build_inventory(root: Path) -> dict:
             "projectScopeSource": probe["projectScopeSource"],
             "csharpFiles": probe["csharpFiles"],
             "skippedCsharpFiles": probe["skippedCsharpFiles"],
+            "iosFiles": probe["iosFiles"],
+            "objectiveCFiles": probe["objectiveCFiles"],
+            "xcodeProjectFiles": probe["xcodeProjectFiles"],
+            "xcodeWorkspaceFiles": probe["xcodeWorkspaceFiles"],
         })
     return {"generatedAt": now_iso(), "items": items}
 
@@ -378,6 +417,8 @@ def build_query_runtime_status() -> dict:
         module_status("tree_sitter_c_sharp", "tree-sitter-c-sharp"),
         module_status("tree_sitter_kotlin", "tree-sitter-kotlin"),
         module_status("tree_sitter_java", "tree-sitter-java"),
+        module_status("tree_sitter_swift", "tree-sitter-swift"),
+        module_status("tree_sitter_objc", "tree-sitter-objc"),
         module_status("graphrag"),
     ]
     return {
@@ -394,7 +435,7 @@ def build_query_runtime_status() -> dict:
             for item in modules
             if item["module"] in {"graphify", "langgraph", "tree_sitter", "tree_sitter_c_sharp"} and not item["available"]
         ],
-        "optional_modules": ["tree_sitter_kotlin", "tree_sitter_java", "graphrag"],
+        "optional_modules": ["tree_sitter_kotlin", "tree_sitter_java", "tree_sitter_swift", "tree_sitter_objc", "graphrag"],
     }
 
 
@@ -411,6 +452,9 @@ def render_markdown(inventory: dict) -> str:
             f"- project scope source: `{item.get('projectScopeSource', 'unknown')}`",
             f"- csharp files: `{item['csharpFiles']}`",
             f"- skipped csharp files: `{item.get('skippedCsharpFiles', 0)}`",
+            f"- ios files: `{item.get('iosFiles', 0)}`",
+            f"- objective-c files: `{item.get('objectiveCFiles', 0)}`",
+            f"- xcode projects: `{len(item.get('xcodeProjectFiles', []))}`",
             f"- active projects: `{len(item.get('projectFiles', []))}`",
             f"- excluded projects: `{len(item.get('excludedProjectFiles', []))}`",
             "",
@@ -453,20 +497,28 @@ from typing import Any
 from scripts.update_wiki import build_inventory, is_under_any
 
 
-CODE_EXTENSIONS = {".cs", ".kt", ".kts", ".java"}
+CODE_EXTENSIONS = {".cs", ".kt", ".kts", ".java", ".swift", ".m", ".mm", ".h"}
 ANDROID_BUILD_FILES = {"settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"}
+IOS_CODE_EXTENSIONS = {".swift", ".m", ".mm", ".h"}
+IOS_GENERATED_PART_SUFFIXES = (".xcassets", ".xcframework", ".framework", ".swiftmodule")
+IOS_PROJECT_EXTENSIONS = {".xcodeproj", ".xcworkspace"}
+IOS_SURFACE_EXTENSIONS = {".entitlements", ".pbxproj", ".plist", ".storyboard", ".xcconfig", ".xcscheme", ".xib"}
 SKIP_PARTS = {
     ".git",
     ".gradle",
     ".idea",
     ".vs",
+    ".build",
     "bin",
     "build",
+    "carthage",
     "coverage",
     "dist",
+    "deriveddata",
     "node_modules",
     "obj",
     "packages",
+    "pods",
     "testresults",
 }
 ENTRY_HINTS = (
@@ -476,9 +528,12 @@ ENTRY_HINTS = (
     "Fragment",
     "Handler",
     "Job",
+    "Manager",
     "Repository",
+    "Request",
     "Service",
     "Startup",
+    "ViewController",
     "ViewModel",
     "Worker",
 )
@@ -506,6 +561,7 @@ NOISE_WORDS = {
     "helpers",
     "interface",
     "internal",
+    "ios",
     "java",
     "job",
     "kotlin",
@@ -523,6 +579,7 @@ NOISE_WORDS = {
     "service",
     "settings",
     "startup",
+    "swift",
     "system",
     "task",
     "test",
@@ -531,6 +588,7 @@ NOISE_WORDS = {
     "utils",
     "viewmodel",
     "worker",
+    "xcode",
 }
 
 
@@ -587,7 +645,14 @@ def metadata_text(path: Path, wiki_root: Path, scope: dict[str, Any]) -> str:
 
 
 def should_skip(path: Path) -> bool:
-    return any(part.lower() in SKIP_PARTS for part in path.parts)
+    return any(
+        part.lower() in SKIP_PARTS or part.lower().endswith(IOS_GENERATED_PART_SUFFIXES)
+        for part in path.parts
+    )
+
+
+def is_test_path(path: Path) -> bool:
+    return any("test" in part.lower() for part in path.parts)
 
 
 def split_words(value: str) -> list[str]:
@@ -606,12 +671,18 @@ def platform_markers(source: Path) -> dict[str, bool]:
             "hasAndroidBuildFile": False,
             "hasAndroidManifest": False,
             "hasCsharpProject": False,
+            "hasIosProject": False,
+            "hasObjectiveCFiles": False,
+            "hasSwiftFiles": False,
         }
     scan_root = source.parent if source.is_file() else source
     return {
         "hasAndroidBuildFile": any((scan_root / name).exists() for name in ANDROID_BUILD_FILES),
         "hasAndroidManifest": any(scan_root.rglob("AndroidManifest.xml")),
         "hasCsharpProject": any(scan_root.rglob("*.csproj")),
+        "hasIosProject": any(scan_root.rglob("*.xcodeproj")) or any(scan_root.rglob("*.xcworkspace")),
+        "hasObjectiveCFiles": any(scan_root.rglob("*.m")) or any(scan_root.rglob("*.mm")),
+        "hasSwiftFiles": any(scan_root.rglob("*.swift")),
     }
 
 
@@ -623,7 +694,10 @@ def detect_platform(source: Path) -> str:
     has_android_build = markers["hasAndroidBuildFile"]
     has_android_manifest = markers["hasAndroidManifest"]
     has_csharp_project = markers["hasCsharpProject"]
-    if (has_android_build or has_android_manifest) and has_csharp_project:
+    has_android = has_android_build or has_android_manifest or any(scan_root.rglob("*.kt")) or any(scan_root.rglob("*.java"))
+    has_ios = markers["hasIosProject"] or markers["hasSwiftFiles"] or markers["hasObjectiveCFiles"]
+    platform_count = sum(1 for value in (has_android, has_csharp_project, has_ios) if value)
+    if platform_count > 1:
         return "mixed"
     if has_android_build:
         return "android"
@@ -633,6 +707,8 @@ def detect_platform(source: Path) -> str:
         return "csharp"
     if any(scan_root.rglob("*.kt")) or any(scan_root.rglob("*.java")):
         return "android"
+    if has_ios:
+        return "ios"
     return "unknown"
 
 
@@ -642,13 +718,18 @@ def platform_detection(source: Path) -> dict[str, Any]:
             "hasAndroidBuildFile": False,
             "hasAndroidManifest": False,
             "hasCsharpProject": False,
+            "hasIosProject": False,
+            "hasObjectiveCFiles": False,
+            "hasSwiftFiles": False,
             "guard": "missing_source",
         }
     markers = platform_markers(source)
     has_android_build = markers["hasAndroidBuildFile"]
     has_android_manifest = markers["hasAndroidManifest"]
     has_csharp_project = markers["hasCsharpProject"]
-    guard = "mixed_android_csharp_blocked" if (has_android_build or has_android_manifest) and has_csharp_project else "none"
+    has_android = has_android_build or has_android_manifest
+    has_ios = markers["hasIosProject"] or markers["hasSwiftFiles"] or markers["hasObjectiveCFiles"]
+    guard = "mixed_platform_blocked" if sum(1 for value in (has_android, has_csharp_project, has_ios) if value) > 1 else "none"
     return {
         **markers,
         "guard": guard,
@@ -675,10 +756,13 @@ def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
             files.append(path.resolve())
         return sorted(files)
 
-    if platform != "android":
+    if platform == "android":
+        extensions = {".kt", ".kts", ".java"}
+    elif platform == "ios":
+        extensions = IOS_CODE_EXTENSIONS
+    else:
         return []
 
-    extensions = {".kt", ".kts", ".java"}
     files = []
     for path in scan_root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in extensions or should_skip(path):
@@ -686,7 +770,9 @@ def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
         if excluded_roots and is_under_any(path, excluded_roots):
             continue
         lowered = path.as_posix().lower()
-        if "/src/test/" in lowered or "/src/androidtest/" in lowered:
+        if platform == "android" and ("/src/test/" in lowered or "/src/androidtest/" in lowered):
+            continue
+        if platform == "ios" and is_test_path(path.relative_to(scan_root)):
             continue
         files.append(path.resolve())
     return sorted(files)
@@ -698,6 +784,18 @@ def extract_symbols(text: str, suffix: str) -> list[dict[str, str]]:
         pattern = r"\b(class|interface|record|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"
     elif suffix in {".kt", ".kts"}:
         pattern = r"\b(class|interface|object|enum\s+class|fun)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    elif suffix == ".swift":
+        pattern = r"\b(class|struct|enum|protocol|actor|extension|func)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    elif suffix in {".m", ".mm", ".h"}:
+        for match in re.finditer(r"@(interface|implementation|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)", text):
+            symbols.append({"kind": match.group(1), "name": match.group(2)})
+            if len(symbols) >= 40:
+                return symbols
+        for match in re.finditer(r"typedef\s+NS_ENUM\s*\([^)]*\)\s*,?\s*([A-Za-z_][A-Za-z0-9_]*)", text):
+            symbols.append({"kind": "enum", "name": match.group(1)})
+            if len(symbols) >= 40:
+                break
+        return symbols
     else:
         pattern = r"\b(class|interface|record|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"
     for match in re.finditer(pattern, text):
@@ -711,6 +809,11 @@ def extract_symbols(text: str, suffix: str) -> list[dict[str, str]]:
 def extract_methods(text: str, suffix: str) -> list[str]:
     if suffix in {".kt", ".kts"}:
         names = re.findall(r"\bfun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
+    elif suffix == ".swift":
+        names = re.findall(r"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
+        names.extend("init" for _ in re.finditer(r"\binit\s*\(", text))
+    elif suffix in {".m", ".mm", ".h"}:
+        names = [name.replace(":", ":") for name in re.findall(r"[-+]\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_:]*)", text)]
     elif suffix == ".java":
         names = re.findall(r"\b(?:public|private|protected|static|final|\s)+[\w<>\[\],\s?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
     else:
@@ -728,6 +831,13 @@ def extract_csharp_routes(text: str) -> list[str]:
     for match in re.finditer(r"\[(?:Route|HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch)\s*(?:\(\s*\"([^\"]+)\"\s*\))?", text):
         routes.append(match.group(1) or match.group(0).strip("[]"))
     return routes[:40]
+
+
+def extract_ios_surface(text: str) -> list[str]:
+    surface = []
+    for match in re.finditer(r"\"([^\"]*(?:AppApi|WebApi|API|api)[^\"]*/[^\"]*)\"", text):
+        surface.append(match.group(1))
+    return surface[:40]
 
 
 CONST_VAL_RE = re.compile(r"\bconst\s+val\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\r\n]+)")
@@ -800,8 +910,9 @@ def extract_retrofit_surface(text: str, base_constants: dict[str, str] | None = 
 
 def classify_entry(path: Path, text: str, symbols: list[dict[str, str]], platform: str) -> str:
     haystack = f"{path.as_posix()} {' '.join(symbol.get('name', '') for symbol in symbols)}".lower()
+    text_lower = text.lower()
     if platform == "android":
-        if "@composable" in text.lower():
+        if "@composable" in text_lower:
             return "compose_ui"
         if "retrofit2.http" in text or re.search(r"@(GET|POST|PUT|DELETE|PATCH)\s*\(", text):
             return "retrofit_api"
@@ -813,8 +924,27 @@ def classify_entry(path: Path, text: str, symbols: list[dict[str, str]], platfor
             return "activity"
         if "fragment" in haystack:
             return "fragment"
-        if "module" in haystack and ("koin" in text.lower() or "dagger" in text.lower() or "hilt" in text.lower()):
+        if "module" in haystack and ("koin" in text_lower or "dagger" in text_lower or "hilt" in text_lower):
             return "di_registration"
+    if platform == "ios":
+        if "@main" in text or "uiapplicationdelegate" in text_lower or "appdelegate" in haystack:
+            return "application_bootstrap"
+        if "widget" in haystack:
+            return "widget"
+        if "unnotificationserviceextension" in text_lower:
+            return "notification_extension"
+        if "viewmodel" in haystack:
+            return "view_model"
+        if "viewcontroller" in haystack or "uiviewcontroller" in text_lower:
+            return "view_controller"
+        if "swiftui" in text_lower or "body: some view" in text_lower:
+            return "swiftui_view"
+        if "request" in haystack or "webapirequest" in haystack:
+            return "api_request"
+        if "manager" in haystack:
+            return "manager"
+        if "model" in haystack:
+            return "model"
     if "controller" in haystack:
         return "api_controller"
     if "hostedservice" in haystack or "backgroundservice" in haystack or "worker" in haystack:
@@ -843,7 +973,14 @@ def scan_sources(item: dict[str, Any], platform: str, files: list[Path]) -> tupl
         file_symbols = extract_symbols(text, path.suffix.lower())
         methods = extract_methods(text, path.suffix.lower())
         entry_kind = classify_entry(rel, text, file_symbols, platform)
-        routes = extract_csharp_routes(text) if platform == "csharp" else extract_retrofit_surface(text, kotlin_constants)
+        if platform == "csharp":
+            routes = extract_csharp_routes(text)
+        elif platform == "android":
+            routes = extract_retrofit_surface(text, kotlin_constants)
+        elif platform == "ios":
+            routes = extract_ios_surface(text)
+        else:
+            routes = []
         score = sum(2 for hint in ENTRY_HINTS if hint.lower() in path.name.lower())
         score += 4 if routes else 0
         score += 3 if entry_kind != "source_file" else 0
@@ -922,6 +1059,28 @@ def discover_android_surfaces(source: Path, excluded_roots: list[Path] | None = 
         "gradle_modules": gradle_files,
         "manifest_components": manifest_components[:120],
         "manifest_files": manifests[:40],
+    }
+
+
+def discover_ios_surfaces(source: Path, excluded_roots: list[Path] | None = None) -> dict[str, Any]:
+    scan_root = source.parent if source.is_file() else source
+    excluded_roots = excluded_roots or []
+
+    def rels(pattern: str, limit: int = 80) -> list[str]:
+        return [
+            str(path.relative_to(scan_root)).replace("\\", "/")
+            for path in scan_root.rglob(pattern)
+            if not should_skip(path) and not is_under_any(path, excluded_roots)
+        ][:limit]
+
+    return {
+        "xcode_projects": rels("*.xcodeproj", 20),
+        "xcode_workspaces": rels("*.xcworkspace", 20),
+        "xcode_schemes": rels("*.xcscheme", 80),
+        "xcode_configs": rels("*.xcconfig", 80),
+        "plist_files": rels("*.plist", 80),
+        "ui_resources": [*rels("*.storyboard", 80), *rels("*.xib", 80)][:120],
+        "swift_package_resolved": rels("Package.resolved", 20),
     }
 
 
@@ -1014,9 +1173,10 @@ def build_module(
     terms = summarize_terms(name, entries)
     excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
     android = discover_android_surfaces(source, excluded_roots) if platform == "android" and source.exists() else {}
+    ios = discover_ios_surfaces(source, excluded_roots) if platform == "ios" and source.exists() else {}
     guard_note = (
-        "Mixed Android and C# project markers were found under this target; source scanning was blocked. "
-        "Split wiki.scope.json targets to the Android and C# project roots before generating module evidence."
+        "Mixed project markers were found under this target; source scanning was blocked. "
+        "Split wiki.scope.json targets to single-platform project roots before generating module evidence."
     )
     graphify = run_graphify_shard(wiki_root, scope, module_id, source.parent if source.is_file() else source, files) if files else {
         "status": "blocked" if platform == "mixed" else "empty",
@@ -1046,12 +1206,13 @@ def build_module(
         "platformDetection": detection,
         "graphify": graphify,
         **android,
+        **ios,
     }
     module = {
         "id": module_id,
         "name": name,
         "logicalName": name,
-        "kind": "android-app" if platform == "android" else "csharp-module" if platform == "csharp" else "mixed-source" if platform == "mixed" else "source-module",
+        "kind": "android-app" if platform == "android" else "ios-app" if platform == "ios" else "csharp-module" if platform == "csharp" else "mixed-source" if platform == "mixed" else "source-module",
         "platform": platform,
         "solution_group": item.get("repo") or name,
         "project": name,
@@ -2067,8 +2228,8 @@ def build_scope(project_name: str | None, repo_path: str | None) -> dict:
         "inventory": {
             "childDepth": 1,
             "markerMaxDepth": 2,
-            "markerFiles": ["package.json", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"],
-            "markerExtensions": [".sln", ".csproj", ".vbproj"],
+            "markerFiles": ["package.json", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "Package.resolved", "Podfile"],
+            "markerExtensions": [".sln", ".csproj", ".vbproj", ".xcodeproj", ".xcworkspace"],
             "skipDirectoryNames": sorted(SKIP_DIRS),
         },
         "dataFiles": {
@@ -2124,7 +2285,7 @@ def create_scaffold(args: argparse.Namespace) -> list[str]:
         created.append(str(path))
 
     files = {
-        "requirements.txt": "graphifyy>=0.4.10,<0.9\nlanggraph>=0.2\ntree-sitter>=0.21\ntree-sitter-c-sharp>=0.21\n",
+        "requirements.txt": "graphifyy>=0.4.10,<0.9\nlanggraph>=0.2\ntree-sitter>=0.21\ntree-sitter-c-sharp>=0.21\ntree-sitter-kotlin>=1.0\ntree-sitter-java>=0.21\ntree-sitter-swift>=0.7.3\ntree-sitter-objc>=3.0.2\n",
         "README.md": "# LLM Wiki\n\nBootstrap-created LLM Wiki environment. Run module onboarding next to strengthen metadata and evidence.\n",
     }
     for rel, content in files.items():

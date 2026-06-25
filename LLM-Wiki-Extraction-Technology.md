@@ -2,7 +2,7 @@
 
 本文說明 `LLM Wiki Forge` 如何從一個原始碼 repo 提取出可供 LLM / AI Agent 使用的本機 Wiki。這裡的「提取」不是只把檔案轉成 Markdown，也不是單純做全文索引，而是把程式碼、模組邊界、入口點、符號線索、社群導覽、查詢證據與同步狀態整理成一組可重建、可驗證、可維護的 artifacts。
 
-目前 `E:\LLMWikiSkill` 這個 repo 的實作重點是 C# / .NET 專案，採用 `static-first-pass` 策略：先用 Python 標準函式庫做穩定的靜態掃描與資料建模，再保留擴充點給 Tree-sitter、Graphify、LangGraph 或更完整的 query runtime。
+目前 `E:\LLMWikiSkill` 這個 repo 採用 `static-first-pass` 策略支援 `.NET / C#`、`Android / Kotlin / Java`、`iOS / Swift / Objective-C`：先用 Python 標準函式庫做穩定的靜態掃描與資料建模，再保留擴充點給 Tree-sitter、Graphify、LangGraph 或更完整的 query runtime。
 
 ## 1. 技術定位
 
@@ -88,7 +88,7 @@ scripts/
 | `scope.inventory.json` | 由 scope 掃描產生的 repo/project inventory |
 | `modules/*.json` | 模組語意卡、技術契約、入口點、依賴、風險、信心等機器資料 |
 | `01_Modules/*.md` | module JSON 的人類閱讀版 |
-| `symbols/*.json` | C# 檔案、類別、介面、方法、路由、using 等符號線索 |
+| `symbols/*.json` | C# / Kotlin / Java / Swift / Objective-C 檔案、型別、方法、路由或 API path 等符號線索 |
 | `communities/*.json` | 社群導覽資料，目前可由 module metadata fallback 產生 |
 | `query_runs/*.json` | 查詢路由、證據充分性、direct evidence、抽取計畫 |
 | `repo_sync/*.json` | 每個 repo 的最後同步 commit baseline |
@@ -239,29 +239,36 @@ inventory 會記錄：
 
 `scripts/generate_module_wiki.py` 是目前最核心的提取腳本。
 
-它會從 scope inventory 裡的每個 target 開始，對 C# source tree 做靜態掃描。
+它會從 scope inventory 裡的每個 target 開始，依平台對 source tree 做靜態掃描。
 
-### 6.1 C# 檔案掃描
+### 6.1 程式碼檔案掃描
 
 掃描目標：
 
 ```text
 *.cs
+*.kt
+*.kts
+*.java
+*.swift
+*.m
+*.mm
+*.h
 ```
 
-排除邏輯沿用 scope inventory 的 skip dirs 與 active project scope。當 inventory 來自 `.slnf` 或 `.sln` 時，`generate_module_wiki.py` 只會掃描 `projectFiles` 內 active projects 的 roots，跳過 `excludedProjectFiles` 的程式碼。每個 C# 檔案會被讀取並提取：
+排除邏輯沿用 scope inventory 的 skip dirs 與 active project scope。當 inventory 來自 `.slnf` 或 `.sln` 時，`generate_module_wiki.py` 只會掃描 `projectFiles` 內 active projects 的 roots，跳過 `excludedProjectFiles` 的程式碼。iOS 掃描會跳過 Unit/UI test、`.xcframework`、`.framework`、`.xcassets` 等測試或 vendor/generated 內容。每個程式碼檔案會被讀取並提取：
 
 | 資料 | 提取方式 |
 | --- | --- |
-| class / interface / record / struct / enum | regex 掃描型別宣告 |
-| method names | regex 掃描方法簽名 |
-| route attributes | regex 掃描 `Route`、`HttpGet`、`HttpPost` 等 attribute |
+| class / interface / record / struct / enum / protocol / extension / actor | regex 掃描型別宣告 |
+| method names | regex 掃描 C# / Kotlin / Java / Swift / Objective-C 方法簽名 |
+| route attributes / API path | 掃描 C# route attribute、Android Retrofit annotation、iOS API path string |
 | usings | regex 掃描 `using Namespace;` |
 | entry kind | 依路徑與符號名稱分類 |
-| entry score | 依 Controller、Service、Repository、Job、Handler 等提示加權 |
+| entry score | 依 Controller、Service、Repository、Job、Handler、ViewController、ViewModel、Request 等提示加權 |
 | project scope | 由 `.slnf` / `.sln` / `.csproj` discovery 決定是否掃描 |
 
-目前這是輕量的 static-first-pass，不會完整解析 C# 語法樹，也不會摘要 method body。因此它穩定、可攜、依賴少，但 method-level 語意仍需要後續 Tree-sitter 或更完整 parser 強化。
+目前這是輕量的 static-first-pass，不會完整摘要 method body。因此它穩定、可攜、依賴少，但 method-level 語意仍需要後續 Tree-sitter 或更完整 parser 強化。
 
 ### 6.2 Entry kind 分類
 
@@ -359,7 +366,7 @@ Markdown 版包含：
 Wiki/_data/symbols/<module>.json
 ```
 
-它保存每個 C# 檔案的：
+它保存每個程式碼檔案的：
 
 1. 相對路徑。
 2. symbols。
@@ -525,7 +532,7 @@ backfill 的原則是一次只處理一個 repo，且應把 durable facts 放在
 
 目前 `E:\LLMWikiSkill` bundled pipeline 的能力邊界如下：
 
-1. C# 掃描使用 regex，不是完整 C# parser。
+1. 靜態掃描使用 regex，不是完整語言 parser。
 2. 不會摘要 method body。
 3. Graphify 沒有 bundled，所以 community 是 explicit degraded fallback。
 4. graph_runtime 是 smoke / evidence pack runtime，不是完整語意搜尋引擎。
@@ -541,7 +548,7 @@ backfill 的原則是一次只處理一個 repo，且應把 durable facts 放在
 | 層級 | 目前狀態 | 可升級方向 |
 | --- | --- | --- |
 | Source discovery | `wiki.scope.json` + filesystem scan | 加入 monorepo target policy、repo registry |
-| Symbol extraction | regex C# scan | Tree-sitter C# / Roslyn parser |
+| Symbol extraction | regex C# / Kotlin / Java / Swift / Objective-C scan | Tree-sitter language parsers / Roslyn parser |
 | Method evidence | method name only | method body range、call graph、definition/reference |
 | Community | static module fallback | Graphify graph-backed communities |
 | Runtime routing | term and entry symbol scoring | LangGraph planner、semantic router、symbol-first extraction |

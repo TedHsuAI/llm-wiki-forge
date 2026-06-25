@@ -22,6 +22,16 @@ try:
 except ImportError:  # pragma: no cover - optional Android dependency.
     tree_sitter_java = None
 
+try:
+    import tree_sitter_swift
+except ImportError:  # pragma: no cover - optional iOS dependency.
+    tree_sitter_swift = None
+
+try:
+    import tree_sitter_objc
+except ImportError:  # pragma: no cover - optional iOS dependency.
+    tree_sitter_objc = None
+
 from .io import load_json
 from .router import tokenize
 
@@ -41,9 +51,14 @@ BLOCKED_PARTS = {
 
 DECLARATION_TYPES = {
     "annotation_type_declaration": "annotation",
+    "actor_declaration": "class",
+    "category_implementation": "category",
+    "category_interface": "category",
     "class_declaration": "class",
     "companion_object": "object",
+    "extension_declaration": "extension",
     "interface_declaration": "interface",
+    "implementation_definition": "class",
     "struct_declaration": "struct",
     "enum_declaration": "enum",
     "object_declaration": "object",
@@ -51,6 +66,7 @@ DECLARATION_TYPES = {
     "function_declaration": "method",
     "constructor_declaration": "constructor",
     "primary_constructor": "constructor",
+    "protocol_declaration": "interface",
     "secondary_constructor": "constructor",
     "property_declaration": "property",
     "field_declaration": "property",
@@ -62,6 +78,10 @@ PARSER_MODULES = {
     ".kt": tree_sitter_kotlin,
     ".kts": tree_sitter_kotlin,
     ".java": tree_sitter_java,
+    ".swift": tree_sitter_swift,
+    ".m": tree_sitter_objc,
+    ".mm": tree_sitter_objc,
+    ".h": tree_sitter_objc,
 }
 
 LARGE_METHOD_LINE_THRESHOLD = 300

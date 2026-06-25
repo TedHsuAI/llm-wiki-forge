@@ -41,6 +41,7 @@ SEMANTIC_NOISE_WORDS = {
     "implements",
     "interface",
     "internal",
+    "ios",
     "java",
     "json",
     "kotlin",
@@ -62,6 +63,7 @@ SEMANTIC_NOISE_WORDS = {
     "services",
     "settings",
     "startup",
+    "swift",
     "system",
     "task",
     "test",
@@ -72,8 +74,10 @@ SEMANTIC_NOISE_WORDS = {
     "viewmodel",
     "webapi",
     "worker",
+    "xcode",
     "xml",
 }
+CODE_FILE_SUFFIXES = {".cs", ".kt", ".kts", ".java", ".swift", ".m", ".mm", ".h"}
 
 
 def node_label(node: dict[str, Any]) -> str:
@@ -495,7 +499,7 @@ def infer_title(labels: list[str], files: list[str]) -> str:
         label
         for label in labels
         if label
-        and not label.endswith(".cs")
+        and Path(label).suffix.lower() not in CODE_FILE_SUFFIXES
         and not label.startswith(".")
         and len(label) <= 80
         and split_terms(label)

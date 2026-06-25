@@ -114,7 +114,6 @@ Check whether `wiki_root` has base infrastructure:
 ```text
 <wiki_root>/wiki.scope.json
 <wiki_root>/Wiki
-<wiki_root>/scripts
 ```
 
 If any are missing, mode is `bootstrap+onboarding`.

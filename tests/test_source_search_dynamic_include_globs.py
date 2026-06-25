@@ -73,6 +73,38 @@ def test_source_search_uses_wiki_scope_language_globs(tmp_path, monkeypatch):
     assert "*.py" in result["search_contract"]["include_globs"]
 
 
+def test_source_search_uses_ios_language_globs(tmp_path, monkeypatch):
+    wiki_root = tmp_path / "wiki"
+    source_root = tmp_path / "src"
+    wiki_root.mkdir()
+    source_root.mkdir()
+    registry = tmp_path / "registry.json"
+    _write_registry(registry, wiki_root, source_root, [])
+    monkeypatch.setattr(source_search, "DEFAULT_WIKI_REGISTRY", registry)
+    (wiki_root / "wiki.scope.json").write_text(
+        json.dumps(
+            {
+                "repos": [
+                    {
+                        "logicalName": "IOSRepo",
+                        "actualRoot": str(source_root),
+                        "platform": "ios",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "AppDelegate.swift").write_text("let iosNeedle = true\n", encoding="utf-8")
+
+    result = source_search.search_source(wiki_root=wiki_root, patterns=["iosNeedle"])
+
+    assert result["total_count"] == 1
+    assert result["matches"][0]["path"].endswith("AppDelegate.swift")
+    assert "*.swift" in result["search_contract"]["include_globs"]
+    assert "swift" in result["search_contract"]["include_profile"]["language_hints"]
+
+
 def test_source_search_keeps_sql_opt_in(tmp_path, monkeypatch):
     wiki_root = tmp_path / "wiki"
     source_root = tmp_path / "src"

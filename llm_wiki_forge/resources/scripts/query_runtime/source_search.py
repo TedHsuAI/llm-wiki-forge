@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import selectors
@@ -66,7 +67,7 @@ LANGUAGE_INCLUDE_GLOBS = {
     "python": ["*.py", "*.pyw", "*.ipynb"],
     "go": ["*.go", "go.mod", "go.sum"],
     "rust": ["*.rs", "Cargo.toml", "Cargo.lock"],
-    "swift": ["*.swift", "*.m", "*.mm", "*.h", "*.plist", "*.pbxproj"],
+    "swift": ["*.swift", "*.m", "*.mm", "*.h", "*.plist", "*.pbxproj", "*.xcscheme", "*.xcconfig", "*.storyboard", "*.xib", "*.entitlements"],
     "cpp": ["*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx", "*.cmake", "CMakeLists.txt"],
     "php": ["*.php", "*.phtml"],
     "ruby": ["*.rb", "*.rake", "Gemfile"],
@@ -122,6 +123,15 @@ EXTENSION_LANGUAGE_HINTS = {
     ".go": "go",
     ".rs": "rust",
     ".swift": "swift",
+    ".m": "swift",
+    ".mm": "swift",
+    ".pbxproj": "swift",
+    ".plist": "swift",
+    ".storyboard": "swift",
+    ".xib": "swift",
+    ".xcconfig": "swift",
+    ".xcscheme": "swift",
+    ".entitlements": "swift",
     ".cpp": "cpp",
     ".cc": "cpp",
     ".cxx": "cpp",
@@ -366,6 +376,9 @@ def _module_language_profile(wiki_root: Path) -> tuple[set[str], set[str]]:
         data = _load_json(path)
         if not data:
             continue
+        language = _normalize_language_hint(data.get("platform"))
+        if language:
+            languages.add(language)
         contract = data.get("technical_contract") if isinstance(data.get("technical_contract"), dict) else {}
         for framework in contract.get("runtime_frameworks") or []:
             language = _normalize_language_hint(framework)
@@ -525,10 +538,70 @@ def _grep_args(pattern: str, root: Path, *, regex: bool, include_globs: list[str
 
 
 def _parse_grep_line(line: str) -> tuple[str, int, str] | None:
-    parts = line.rstrip("\n").split(":", 2)
-    if len(parts) != 3 or not parts[1].isdigit():
+    match = re.match(r"^(.*):(\d+):(.*)$", line.rstrip("\n"))
+    if not match:
         return None
-    return parts[0], int(parts[1]), parts[2]
+    return match.group(1), int(match.group(2)), match.group(3)
+
+
+def _path_matches_include(path: Path, root: Path, include_globs: list[str]) -> bool:
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    return any(fnmatch.fnmatch(path.name, glob) or fnmatch.fnmatch(rel, glob) for glob in include_globs)
+
+
+def _run_python_scan(
+    pattern: str,
+    root: Path,
+    *,
+    regex: bool,
+    include_globs: list[str],
+    remaining_limit: int,
+    timeout_seconds: float,
+) -> tuple[list[dict[str, Any]], bool, str | None]:
+    started = time.monotonic()
+    matches: list[dict[str, Any]] = []
+    truncated = False
+    compiled: re.Pattern[str] | None = None
+    if regex:
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            return [], False, f"invalid regex for Python source scan: {exc}"
+    try:
+        for path in root.rglob("*"):
+            if len(matches) >= remaining_limit:
+                truncated = True
+                break
+            if time.monotonic() - started > timeout_seconds:
+                return matches, truncated, f"Python source scan timed out after {timeout_seconds:.0f}s for pattern '{pattern}' under {root}"
+            if not path.is_file() or _path_is_excluded(path) or not _path_matches_include(path, root, include_globs):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                matched = compiled.search(line) if compiled is not None else pattern in line
+                if not matched:
+                    continue
+                matches.append(
+                    {
+                        "pattern": pattern,
+                        "path": str(path),
+                        "line": line_number,
+                        "text": line[:500],
+                        "engine": "python-fallback",
+                    }
+                )
+                if len(matches) >= remaining_limit:
+                    truncated = True
+                    break
+    except OSError as exc:
+        return matches, truncated, f"Python source scan failed under {root}: {exc}"
+    return matches, truncated, None
 
 
 def _run_grep(
@@ -542,7 +615,14 @@ def _run_grep(
 ) -> tuple[list[dict[str, Any]], bool, str | None]:
     grep = _grep_binary()
     if not grep:
-        return [], False, "grep is not available"
+        return _run_python_scan(
+            pattern,
+            root,
+            regex=regex,
+            include_globs=include_globs,
+            remaining_limit=remaining_limit,
+            timeout_seconds=timeout_seconds,
+        )
 
     started = time.monotonic()
     proc = subprocess.Popen(
@@ -613,7 +693,7 @@ def _run_grep(
 
 
 def _path_is_excluded(path: Path) -> bool:
-    return any(part in DEFAULT_EXCLUDE_DIRS for part in path.parts)
+    return any(part.lower() in {directory.lower() for directory in DEFAULT_EXCLUDE_DIRS} for part in path.parts)
 
 
 def _read_utf16_text(path: Path) -> str | None:

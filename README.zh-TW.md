@@ -19,12 +19,13 @@ Repository: <https://github.com/TedHsuAI/llm-wiki-forge>
 
 ## 目前支援範圍
 
-LLM Wiki Forge 目前僅支援兩類程式碼：
+LLM Wiki Forge 目前支援三類程式碼：
 
 - `.NET / C#`
 - `Android / Kotlin / Java`
+- `iOS / Swift / Objective-C`
 
-兩類 parser 都會預設安裝。`.NET / C#` 是目前驗證最多的路徑；Android 已可使用，但仍應依目標 repo 做實際驗證。
+這些 parser 都會預設安裝。`.NET / C#` 是目前驗證最多的路徑；Android 與 iOS 已可使用，但仍應依目標 repo 做實際驗證。
 
 ## 專案分類
 
@@ -129,6 +130,7 @@ python -m llm_wiki_forge --version
 - 建議安裝 `rg`
 - `.NET / C#`：`.slnf`、`.sln`、`.csproj` 可提升 extraction scope 準確度
 - Android：Kotlin/Java parser dependencies 會隨預設安裝
+- iOS：Xcode project/workspace markers 與 Swift/Objective-C parser dependencies 會隨預設安裝
 - Graphify package：`graphifyy>=0.4.10,<0.9`
 
 當 `.NET` repo 有被卸載或刻意排除的 Visual Studio projects，請優先使用共享的 `.slnf` solution filter。Forge 會把 `.slnf` projects 視為 active project set，並略過 project roots 外的 C# files。沒有 `.slnf` 時，Forge 會使用 `.sln` project entries。

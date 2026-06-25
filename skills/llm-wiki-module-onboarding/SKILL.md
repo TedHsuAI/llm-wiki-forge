@@ -47,7 +47,7 @@ Add `--schedule "<cron>"` only when the repo should also be registered for futur
 - update exactly one repo entry in `Wiki/_meta/repo_sync/repos.json`
 - run scope/module/community/query validation unless `--no-build` is supplied
 - initialize `Wiki/_meta/repo_sync/<repoKey>.json` for git-backed repos
-- leave query runtime under `scripts/query_runtime` untouched during phase one
+- leave Forge packaged query runtime untouched during phase one
 
 ## Validation Gates
 

@@ -9,7 +9,6 @@ All paths are placeholders. Use the values supplied by the user for `<wiki_root>
 Required evidence:
 
 - `<wiki_root>` exists and contains `wiki.scope.json`.
-- `<wiki_root>/scripts` exists.
 - `<repo_path>` exists and is readable from the executing environment.
 - `<python_command> --version` succeeds.
 - At least one smoke question exists or can be derived as `<project_name> 的主要責任是什麼？`
@@ -18,7 +17,7 @@ Required evidence:
 
 If `project_name` is inferred from the path leaf, mention it before editing. If `repo_path` is missing, ask the user and stop. If `python_command` is missing, auto-detect or create a wiki `.venv` using the `llm-wiki-build` Python Auto-Detection rule.
 
-If `wiki_root` is missing but `repo_path` exists, derive `<parent_of_repo>/<repo_name>-llm-wiki`, state the derived path, and use `llm-wiki-bootstrap` before onboarding. If the user provided a `wiki_root` that lacks `wiki.scope.json`, `Wiki/`, or `scripts/`, use `llm-wiki-bootstrap` at that path before continuing.
+If `wiki_root` is missing but `repo_path` exists, derive `<parent_of_repo>/<repo_name>-llm-wiki`, state the derived path, and use `llm-wiki-bootstrap` before onboarding. If the user provided a `wiki_root` that lacks `wiki.scope.json` or `Wiki/`, use `llm-wiki-bootstrap` at that path before continuing.
 
 ## Gate 2: Scope
 

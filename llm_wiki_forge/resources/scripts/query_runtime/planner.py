@@ -241,7 +241,7 @@ def plan_extraction(
         for path in community.get("source_files") or []:
             if not path or path in seen:
                 continue
-            if Path(str(path)).suffix.lower() not in {".cs", ".kt", ".kts", ".java"}:
+            if Path(str(path)).suffix.lower() not in {".cs", ".kt", ".kts", ".java", ".swift", ".m", ".mm", ".h"}:
                 continue
             seen.add(str(path))
             module_id = str(community.get("module_id") or "")

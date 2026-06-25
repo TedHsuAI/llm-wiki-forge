@@ -19,12 +19,13 @@ Repository: <https://github.com/TedHsuAI/llm-wiki-forge>
 
 ## Supported Targets
 
-LLM Wiki Forge currently supports two code families:
+LLM Wiki Forge currently supports three code families:
 
 - `.NET / C#`
 - `Android / Kotlin / Java`
+- `iOS / Swift / Objective-C`
 
-Parsers for both families are installed by default. The `.NET / C#` pipeline is currently the most exercised path; Android support is available but should still be validated against the target repo.
+Parsers for these families are installed by default. The `.NET / C#` pipeline is currently the most exercised path; Android and iOS support are available but should still be validated against the target repo.
 
 ## Project Layout
 
@@ -130,6 +131,7 @@ python -m llm_wiki_forge --version
 - recommended: `rg`
 - for `.NET / C#`: `.slnf`, `.sln`, and `.csproj` improve extraction scope
 - for Android: Kotlin/Java parser dependencies are installed by default
+- for iOS: Xcode project/workspace markers plus Swift/Objective-C parser dependencies are installed by default
 - Graphify package: `graphifyy>=0.4.10,<0.9`
 
 When a `.NET` repo contains unloaded or intentionally excluded Visual Studio projects, prefer a shared `.slnf` solution filter. Forge treats `.slnf` projects as the active project set and skips C# files outside those project roots. If no `.slnf` exists, Forge uses `.sln` project entries when available.
