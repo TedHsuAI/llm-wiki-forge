@@ -17,7 +17,8 @@ from typing import Any
 from llm_wiki_forge.runtime import run_packaged_module
 
 
-DEFAULT_WIKI_ROOT = "/home/tedhsu/.hermes/data/llm-wiki"
+DEFAULT_WIKI_ROOT = "/home/tedhsu/llm-wiki/dispatch"
+DEFAULT_WIKI_REGISTRY = "/home/tedhsu/llm-wiki/registry.json"
 DEFAULT_PYTHON = sys.executable
 DEFAULT_TIMEOUT_SECONDS = 180
 DEFAULT_DETAIL = "compact"
@@ -27,7 +28,7 @@ COMPACT_SNIPPET_CHARS = 500
 COMPACT_MATCH_CHARS = 300
 RECENT_QUERY_RUN_LIMIT = 200
 DEFAULT_REUSE_DAYS = 7
-DEFAULT_DOMAIN_ROOT = "/home/tedhsu/DispatchRawdata"
+DEFAULT_DOMAIN_ROOT = "/home/tedhsu/codebases"
 VALIDATION_INDEX = "Wiki/_data/query_cache_validations.json"
 FRESHNESS_KEYWORDS = (
     "最新",
@@ -45,6 +46,12 @@ RUNTIME_MODULES = {
     "query": "scripts.query_runtime.query_orchestrator",
     "source-search": "scripts.query_runtime.source_search",
 }
+PLATFORM_SCOPE_TERMS = {
+    "android": ["android", "安卓"],
+    "ios": ["ios", "iphone", "蘋果"],
+}
+DISPATCH_SCOPE_TERMS = ["dispatch", "派遣", "派車", "搜車", "dispatchrule", "tdc"]
+PLATFORM_CODE_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*(?:Android|ANDROID|iOS|IOS)\b")
 
 
 def tool_result(data: dict[str, Any]) -> str:
@@ -59,6 +66,10 @@ def tool_error(message: str, **extra: Any) -> str:
 
 def _wiki_root() -> Path:
     return Path(os.environ.get("HERMES_LLM_WIKI_ROOT", DEFAULT_WIKI_ROOT)).expanduser()
+
+
+def _wiki_registry() -> Path:
+    return Path(os.environ.get("HERMES_LLM_WIKI_REGISTRY", DEFAULT_WIKI_REGISTRY)).expanduser()
 
 
 def _python_bin() -> str:
@@ -126,6 +137,129 @@ def _load_json_file(path: Path) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _dedupe_values(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def _valid_wiki_root(path: Path) -> bool:
+    return (
+        path.is_dir()
+        and (path / "wiki.scope.json").is_file()
+        and (path / "Wiki" / "_data" / "modules").is_dir()
+    )
+
+
+def _registry_roots() -> list[dict[str, Any]]:
+    data = _load_json_file(_wiki_registry())
+    roots = data.get("roots") if isinstance(data.get("roots"), list) else []
+    result: list[dict[str, Any]] = []
+    for item in roots:
+        if not isinstance(item, dict):
+            continue
+        wiki_root = Path(str(item.get("wiki_root") or "")).expanduser()
+        if not _valid_wiki_root(wiki_root):
+            continue
+        result.append({**item, "wiki_root": str(wiki_root)})
+    return result
+
+
+def _scope_term_hits(question: str) -> dict[str, Any]:
+    lowered = question.lower()
+    if PLATFORM_CODE_RE.search(question):
+        platform_hits: list[str] = []
+    else:
+        platform_hits = [
+            platform
+            for platform, terms in PLATFORM_SCOPE_TERMS.items()
+            if any(term in lowered for term in terms)
+        ]
+    dispatch_hits = [term for term in DISPATCH_SCOPE_TERMS if term in lowered]
+    return {
+        "platforms": _dedupe_values(platform_hits),
+        "dispatch_terms": _dedupe_values(dispatch_hits),
+        "joint": bool(platform_hits and dispatch_hits) or "聯合" in question,
+        "platform_code_context": bool(PLATFORM_CODE_RE.search(question)),
+    }
+
+
+def _root_matches_platform(root: dict[str, Any], platform: str) -> bool:
+    values = [root.get("id"), root.get("label"), *(root.get("platforms") or [])]
+    return any(platform == str(value or "").lower() for value in values)
+
+
+def _select_wiki_root(question: str) -> tuple[Path, dict[str, Any]]:
+    default_root = _wiki_root()
+    roots = _registry_roots()
+    hits = _scope_term_hits(question)
+    platform_roots: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    for platform in hits["platforms"]:
+        matches = [root for root in roots if _root_matches_platform(root, platform)]
+        if matches:
+            platform_roots.extend(matches)
+        else:
+            unresolved.append(platform)
+
+    dispatch_root = next((root for root in roots if str(root.get("id") or "").lower() == "dispatch"), None)
+    selected = default_root
+    reason = "default"
+    if platform_roots and not hits["joint"] and not hits["dispatch_terms"]:
+        selected = Path(str(platform_roots[0]["wiki_root"]))
+        reason = "platform_scope"
+    elif dispatch_root and not _valid_wiki_root(selected):
+        selected = Path(str(dispatch_root["wiki_root"]))
+        reason = "fallback_registry_default"
+
+    available = [
+        {
+            "id": root.get("id"),
+            "label": root.get("label"),
+            "wiki_root": root.get("wiki_root"),
+            "platforms": root.get("platforms") or [],
+            "domains": root.get("domains") or [],
+        }
+        for root in roots
+    ]
+    return selected, {
+        "selected_wiki_root": str(selected),
+        "selection_reason": reason,
+        "platforms": hits["platforms"],
+        "dispatch_terms": hits["dispatch_terms"],
+        "joint": hits["joint"],
+        "platform_code_context": hits["platform_code_context"],
+        "resolved_roots": [
+            {
+                "id": root.get("id"),
+                "label": root.get("label"),
+                "wiki_root": root.get("wiki_root"),
+            }
+            for root in _dedupe_roots(platform_roots)
+        ],
+        "unresolved_scopes": unresolved,
+        "available_roots": available,
+    }
+
+
+def _dedupe_roots(roots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.get("id") or root.get("wiki_root") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(root)
+    return result
 
 
 def _repo_roots() -> dict[str, Path]:
@@ -919,6 +1053,7 @@ def _normalize_query_result(
     detail = _clean_detail(detail)
     graph_runtime = payload.get("graph_runtime") if isinstance(payload.get("graph_runtime"), dict) else {}
     coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    scope_intent = payload.get("scope_intent") if isinstance(payload.get("scope_intent"), dict) else {}
     candidate_sources = (
         payload.get("candidate_sources") if isinstance(payload.get("candidate_sources"), dict) else {}
     )
@@ -947,6 +1082,7 @@ def _normalize_query_result(
             ),
             "read_verify": source_search.get("read_verify"),
             "limit_policy": source_search.get("limit_policy"),
+            "search_contract": source_search.get("search_contract"),
         }
         direct_evidence_out = _compact_direct_evidence(direct_evidence)
     else:
@@ -986,6 +1122,7 @@ def _normalize_query_result(
             "compact_source_match_limit": COMPACT_SOURCE_MATCH_LIMIT if detail == "compact" else None,
         },
         "coverage": coverage,
+        "scope_intent": scope_intent,
         "routing": routing_summary,
         "shards": shard_summary,
         "candidate_sources": candidate_sources_out,
@@ -1017,14 +1154,55 @@ def llm_wiki_query_tool(args: dict[str, Any], **_kwargs) -> str:
     detail = _clean_detail(args.get("detail"))
     reuse_recent = args.get("reuse_recent", True)
     reuse_recent = False if isinstance(reuse_recent, str) and reuse_recent.lower() in {"false", "0", "no"} else bool(reuse_recent)
+    selected_root, root_scope_intent = _select_wiki_root(question)
+    if root_scope_intent.get("unresolved_scopes") and not root_scope_intent.get("resolved_roots") and not root_scope_intent.get("dispatch_terms"):
+        return tool_result(
+            {
+                "decision": "needs_user_clarification",
+                "why": "the requested platform scope is not registered in the local LLM Wiki registry",
+                "next_action": "ask_clarification",
+                "detail": detail,
+                "scope_intent": root_scope_intent,
+                "coverage": {},
+                "routing": {
+                    "selected_modules": [],
+                    "selected_module_count": 0,
+                    "exact_identifier_gate": False,
+                },
+                "shards": {"shape": "single_module", "shard_count": 0, "shards": []},
+                "candidate_sources": {},
+                "direct_evidence": [],
+                "direct_evidence_count": 0,
+                "searched_roots": [],
+                "searched_patterns": [],
+                "evidence_pack": None,
+                "graph_status": "skipped",
+                "source_search": {},
+                "answer_gate": {
+                    "status": "needs_user_clarification",
+                    "can_answer": False,
+                    "user_message": "目前這個平台 scope 尚未註冊到 LLM Wiki，請提供對應 repo/module 或先完成 onboarding。",
+                },
+                "ambiguity_gate": {
+                    "needs_user_clarification": True,
+                    "reason": "requested platform scope is unavailable",
+                },
+            }
+        )
 
     try:
+        previous_root = os.environ.get("HERMES_LLM_WIKI_ROOT")
+        os.environ["HERMES_LLM_WIKI_ROOT"] = str(selected_root)
         bypass_validation: dict[str, Any] | None = None
         if reuse_recent:
             reusable = _find_reusable_query_run(question, days=reuse_days)
             if reusable is not None:
                 evidence_path, cached_payload, similarity = reusable
                 cached_payload = {**cached_payload, "question": cached_payload.get("question") or question}
+                cached_payload["scope_intent"] = {
+                    **(cached_payload.get("scope_intent") if isinstance(cached_payload.get("scope_intent"), dict) else {}),
+                    "root_selection": root_scope_intent,
+                }
                 reuse_validation = _validate_reuse_candidate(evidence_path, cached_payload, similarity)
                 reuse_decision = reuse_validation.get("reuse_decision")
                 if reuse_decision in {"direct_reuse", "validated_reuse", "hint_only"}:
@@ -1052,7 +1230,12 @@ def llm_wiki_query_tool(args: dict[str, Any], **_kwargs) -> str:
                 "--json",
             ],
         )
-        payload = {**payload, "question": payload.get("question") or question}
+        payload_scope = payload.get("scope_intent") if isinstance(payload.get("scope_intent"), dict) else {}
+        payload = {
+            **payload,
+            "question": payload.get("question") or question,
+            "scope_intent": {**payload_scope, "root_selection": root_scope_intent},
+        }
         return tool_result(
             _normalize_query_result(
                 payload,
@@ -1065,6 +1248,12 @@ def llm_wiki_query_tool(args: dict[str, Any], **_kwargs) -> str:
         return tool_error("LLM Wiki query timed out", next_action="retry_or_narrow_question")
     except Exception as exc:
         return tool_error(str(exc), next_action="cannot_verify_direct_evidence")
+    finally:
+        if "previous_root" in locals():
+            if previous_root is None:
+                os.environ.pop("HERMES_LLM_WIKI_ROOT", None)
+            else:
+                os.environ["HERMES_LLM_WIKI_ROOT"] = previous_root
 
 
 def llm_wiki_source_search_tool(args: dict[str, Any], **_kwargs) -> str:
@@ -1075,6 +1264,7 @@ def llm_wiki_source_search_tool(args: dict[str, Any], **_kwargs) -> str:
         return tool_error("pattern must be a single fixed string; do not use pipe-combined patterns")
 
     root = str(args.get("root") or "").strip()
+    wiki_root = str(args.get("wiki_root") or "").strip()
     detail = _clean_detail(args.get("detail"))
     try:
         max_limit = 80 if detail == "full" else 20
@@ -1087,6 +1277,9 @@ def llm_wiki_source_search_tool(args: dict[str, Any], **_kwargs) -> str:
         runtime_args.extend(["--root", root])
 
     try:
+        previous_root = os.environ.get("HERMES_LLM_WIKI_ROOT")
+        if wiki_root:
+            os.environ["HERMES_LLM_WIKI_ROOT"] = str(Path(wiki_root).expanduser())
         payload = _run_runtime("source-search", runtime_args)
         searched_roots, searched_patterns = _source_search_summary(payload)
         raw_matches = payload.get("matches") or []
@@ -1111,12 +1304,19 @@ def llm_wiki_source_search_tool(args: dict[str, Any], **_kwargs) -> str:
                 "omitted_count": max(0, len(raw_matches) - len(matches)) if isinstance(raw_matches, list) else 0,
                 "read_verify": payload.get("read_verify"),
                 "limit_policy": payload.get("limit_policy"),
+                "search_contract": payload.get("search_contract"),
             }
         )
     except subprocess.TimeoutExpired:
         return tool_error("LLM Wiki source search timed out", next_action="narrow_pattern_or_root")
     except Exception as exc:
         return tool_error(str(exc), next_action="cannot_verify_direct_evidence")
+    finally:
+        if "previous_root" in locals() and wiki_root:
+            if previous_root is None:
+                os.environ.pop("HERMES_LLM_WIKI_ROOT", None)
+            else:
+                os.environ["HERMES_LLM_WIKI_ROOT"] = previous_root
 
 
 LLM_WIKI_QUERY_SCHEMA = {
@@ -1186,7 +1386,11 @@ LLM_WIKI_SOURCE_SEARCH_SCHEMA = {
             },
             "root": {
                 "type": "string",
-                "description": "Optional source root hint under the configured DispatchRawdata roots.",
+                "description": "Optional source root hint under the selected wiki source roots.",
+            },
+            "wiki_root": {
+                "type": "string",
+                "description": "Optional LLM Wiki root to search, for example the root returned by llm_wiki_query.scope_intent.root_selection.selected_wiki_root.",
             },
             "limit": {
                 "type": "integer",
