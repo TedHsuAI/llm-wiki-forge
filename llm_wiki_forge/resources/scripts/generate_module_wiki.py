@@ -637,23 +637,46 @@ def run_graphify_shard(
         scores = score_all(graph, communities)
         labels = {community_id: f"community-{community_id}" for community_id in communities}
         to_json(graph, communities, str(graph_json))
-        report = generate(
-            graph,
-            communities,
-            scores,
-            labels,
-            god_nodes(graph),
-            surprising_connections(graph, communities),
-            {"total_files": len(files), "total_words": 0},
-            {"input": extraction.get("input_tokens", 0), "output": extraction.get("output_tokens", 0)},
-            str(source_root),
-            suggest_questions(graph, communities, labels),
-        )
+        node_count = graph.number_of_nodes()
+        edge_count = graph.number_of_edges()
+        detailed_report = node_count <= 5000 and edge_count <= 50000
+        if detailed_report:
+            god_node_list = god_nodes(graph)
+            report = generate(
+                graph,
+                communities,
+                scores,
+                labels,
+                god_node_list,
+                surprising_connections(graph, communities),
+                {"total_files": len(files), "total_words": 0},
+                {"input": extraction.get("input_tokens", 0), "output": extraction.get("output_tokens", 0)},
+                str(source_root),
+                suggest_questions(graph, communities, labels),
+            )
+        else:
+            god_node_list = []
+            report = "\n".join(
+                [
+                    "# Graphify Report",
+                    "",
+                    "Detailed report analysis was skipped for this large shard.",
+                    "",
+                    f"- source_root: `{source_root}`",
+                    f"- total_files: `{len(files)}`",
+                    f"- nodes: `{node_count}`",
+                    f"- edges: `{edge_count}`",
+                    f"- communities: `{len(communities)}`",
+                    f"- graph_json: `{metadata_text(graph_json, wiki_root, scope)}`",
+                    "",
+                ]
+            )
         report_path.write_text(report, encoding="utf-8")
         return {
             "status": "enabled",
             "strategy": "shard",
             "mode": "python-api-ast",
+            "report_mode": "detailed" if detailed_report else "bounded",
             "corpus_path": metadata_text(source_root, wiki_root, scope),
             "shard_path": metadata_text(shard_root, wiki_root, scope),
             "graph_json_path": metadata_text(graph_json, wiki_root, scope),
@@ -661,11 +684,11 @@ def run_graphify_shard(
             "total_files": len(files),
             "code_files": len(files),
             "non_code_files": 0,
-            "module_nodes": graph.number_of_nodes(),
-            "graph_edges": graph.number_of_edges(),
+            "module_nodes": node_count,
+            "graph_edges": edge_count,
             "communities": len(communities),
             "cross_edges": 0,
-            "god_nodes": god_nodes(graph),
+            "god_nodes": god_node_list,
             "note": "Graphify shard generated from scoped source files.",
         }
     except Exception as exc:
