@@ -94,6 +94,16 @@ def resolve_path(root: Path, scope: dict, raw: str) -> Path:
     return path
 
 
+def metadata_text(path: Path, wiki_root: Path, scope: dict) -> str:
+    resolved = path.resolve()
+    for key, value in sorted((scope.get("pathVariables") or {}).items()):
+        variable_root = resolve_path(wiki_root, scope, str(value)).resolve()
+        if resolved == variable_root or variable_root in resolved.parents:
+            relative = os.path.relpath(resolved, variable_root).replace("\\", "/")
+            return "${" + str(key) + "}" if relative == "." else "${" + str(key) + "}/" + relative
+    return os.path.relpath(resolved, wiki_root).replace("\\", "/")
+
+
 def should_skip(path: Path) -> bool:
     return any(part.lower() in SKIP_DIRS or part.lower().endswith(IOS_GENERATED_PART_SUFFIXES) for part in path.parts)
 
@@ -299,8 +309,12 @@ def target_exclude_paths(root: Path, scope: dict, repo: dict, target: dict) -> t
     raw_paths = []
     raw_paths.extend(repo.get("excludePaths") or [])
     raw_paths.extend(target.get("excludePaths") or [])
-    resolved_paths = [str(resolve_path(root, scope, str(raw))) for raw in raw_paths]
+    resolved_paths = [metadata_text(resolve_path(root, scope, str(raw)), root, scope) for raw in raw_paths]
     return [str(raw) for raw in raw_paths], resolved_paths
+
+
+def metadata_path_list(paths: list[str], root: Path, scope: dict) -> list[str]:
+    return [metadata_text(Path(path), root, scope) for path in paths]
 
 
 def build_inventory(root: Path) -> dict:
@@ -313,23 +327,23 @@ def build_inventory(root: Path) -> dict:
             "repo": repo.get("logicalName"),
             "logicalName": target.get("logicalName") or repo.get("logicalName"),
             "actualPath": raw_path,
-            "resolvedPath": str(resolved),
+            "resolvedPath": raw_path,
             "excludePaths": exclude_paths,
             "resolvedExcludePaths": resolved_exclude_paths,
             "type": target.get("type", "project-root"),
             "exists": probe["exists"],
-            "projectFiles": probe["projectFiles"],
-            "excludedProjectFiles": probe["excludedProjectFiles"],
-            "missingProjectFiles": probe["missingProjectFiles"],
-            "solutionFiles": probe["solutionFiles"],
-            "solutionFilterFiles": probe["solutionFilterFiles"],
+            "projectFiles": metadata_path_list(probe["projectFiles"], root, scope),
+            "excludedProjectFiles": metadata_path_list(probe["excludedProjectFiles"], root, scope),
+            "missingProjectFiles": metadata_path_list(probe["missingProjectFiles"], root, scope),
+            "solutionFiles": metadata_path_list(probe["solutionFiles"], root, scope),
+            "solutionFilterFiles": metadata_path_list(probe["solutionFilterFiles"], root, scope),
             "projectScopeSource": probe["projectScopeSource"],
             "csharpFiles": probe["csharpFiles"],
             "skippedCsharpFiles": probe["skippedCsharpFiles"],
             "iosFiles": probe["iosFiles"],
             "objectiveCFiles": probe["objectiveCFiles"],
-            "xcodeProjectFiles": probe["xcodeProjectFiles"],
-            "xcodeWorkspaceFiles": probe["xcodeWorkspaceFiles"],
+            "xcodeProjectFiles": metadata_path_list(probe["xcodeProjectFiles"], root, scope),
+            "xcodeWorkspaceFiles": metadata_path_list(probe["xcodeWorkspaceFiles"], root, scope),
         })
     return {"generatedAt": now_iso(), "items": items}
 
@@ -550,6 +564,7 @@ NOISE_WORDS = {
     "controller",
     "data",
     "default",
+    "domain",
     "dto",
     "entity",
     "enum",
@@ -576,6 +591,7 @@ NOISE_WORDS = {
     "repository",
     "request",
     "response",
+    "root",
     "service",
     "settings",
     "startup",
@@ -736,14 +752,30 @@ def platform_detection(source: Path) -> dict[str, Any]:
     }
 
 
-def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
-    source = Path(item["resolvedPath"])
+def item_source_path(wiki_root: Path, scope: dict[str, Any], item: dict[str, Any]) -> Path:
+    return resolve_metadata_path(wiki_root, scope, str(item.get("resolvedPath") or item.get("actualPath") or ""))
+
+
+def item_metadata_paths(wiki_root: Path, scope: dict[str, Any], values: list[str]) -> list[Path]:
+    return [resolve_metadata_path(wiki_root, scope, str(value)) for value in values]
+
+
+def source_files_for_item(*args: Any) -> list[Path]:
+    if len(args) == 2:
+        item, platform = args
+        wiki_root = Path(".").resolve()
+        scope: dict[str, Any] = {}
+    elif len(args) == 4:
+        wiki_root, scope, item, platform = args
+    else:
+        raise TypeError("source_files_for_item expects (item, platform) or (wiki_root, scope, item, platform)")
+    source = item_source_path(wiki_root, scope, item)
     if not source.exists():
         return []
     scan_root = source.parent if source.is_file() else source
-    excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
+    excluded_roots = item_metadata_paths(wiki_root, scope, item.get("resolvedExcludePaths") or item.get("excludePaths") or [])
     if platform == "csharp":
-        active_roots = [Path(project).resolve().parent for project in item.get("projectFiles") or [] if Path(project).exists()]
+        active_roots = [project.parent for project in item_metadata_paths(wiki_root, scope, item.get("projectFiles") or []) if project.exists()]
         enforce_scope = item.get("projectScopeSource") in {"solution_filter", "solution"} and bool(active_roots)
         files = []
         for path in scan_root.rglob("*.cs"):
@@ -960,8 +992,16 @@ def classify_entry(path: Path, text: str, symbols: list[dict[str, str]], platfor
     return "source_file"
 
 
-def scan_sources(item: dict[str, Any], platform: str, files: list[Path]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    source = Path(item["resolvedPath"])
+def scan_sources(*args: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if len(args) == 3:
+        item, platform, files = args
+        wiki_root = Path(".").resolve()
+        scope: dict[str, Any] = {}
+    elif len(args) == 5:
+        wiki_root, scope, item, platform, files = args
+    else:
+        raise TypeError("scan_sources expects (item, platform, files) or (wiki_root, scope, item, platform, files)")
+    source = item_source_path(wiki_root, scope, item)
     scan_root = source.parent if source.is_file() else source
     entries: list[dict[str, Any]] = []
     symbols: list[dict[str, Any]] = []
@@ -1187,14 +1227,14 @@ def build_module(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     name = str(item["logicalName"])
     module_id = slug(name)
-    source = Path(item["resolvedPath"])
+    source = item_source_path(wiki_root, scope, item)
     platform = detect_platform(source)
     detection = platform_detection(source)
-    files = source_files_for_item(item, platform)
-    entries, symbols = scan_sources(item, platform, files)
+    files = source_files_for_item(wiki_root, scope, item, platform)
+    entries, symbols = scan_sources(wiki_root, scope, item, platform, files)
     entry_points = [entry for entry in entries if int(entry.get("entryScore") or 0) > 0] or entries[:25]
     terms = summarize_terms(name, entries)
-    excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
+    excluded_roots = item_metadata_paths(wiki_root, scope, item.get("resolvedExcludePaths") or item.get("excludePaths") or [])
     android = discover_android_surfaces(source, excluded_roots) if platform == "android" and source.exists() else {}
     ios = discover_ios_surfaces(source, excluded_roots) if platform == "ios" and source.exists() else {}
     guard_note = (
@@ -1241,7 +1281,7 @@ def build_module(
         "project": name,
         "source_paths": [str(item["actualPath"])],
         "sourcePath": item["actualPath"],
-        "resolvedPath": item["resolvedPath"],
+        "resolvedPath": item["actualPath"],
         "generated_at": now_iso(),
         "generatedAt": now_iso(),
         "business_context": {
@@ -1761,7 +1801,7 @@ def build_module_communities(
     graph = load_json(resolved_graph_path)
     nodes = graph.get("nodes") or []
     edges = graph.get("links") or graph.get("edges") or []
-    source_root = Path(str(module.get("resolvedPath") or "")) if module.get("resolvedPath") else None
+    source_root = _path_from_wiki_metadata(str(module.get("resolvedPath") or ""), wiki_root, path_variables) if module.get("resolvedPath") else None
 
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for node in nodes:
@@ -2238,11 +2278,25 @@ if __name__ == "__main__":
 '''
 
 
-def build_scope(project_name: str | None, repo_path: str | None) -> dict:
+def scope_repo_path(repo_path: str | None, source_root: str | None) -> tuple[dict[str, str], str | None]:
+    if not repo_path:
+        return {}, None
+    repo = Path(repo_path).resolve()
+    root = Path(source_root).resolve() if source_root else repo.parent.resolve()
+    try:
+        relative = repo.relative_to(root).as_posix()
+        return {"domainRoot": str(root)}, "${domainRoot}" + ("/" + relative if relative else "")
+    except ValueError:
+        return {"domainRoot": str(root)}, str(repo)
+
+
+def build_scope(project_name: str | None, repo_path: str | None, source_root: str | None = None) -> dict:
+    path_variables, repo_ref = scope_repo_path(repo_path, source_root)
     scope = {
         "version": 1,
         "stage": "bootstrap",
         "workspaceRoot": ".",
+        "pathVariables": path_variables,
         "policy": {
             "sourceOfTruth": "json",
             "scopeLocked": True,
@@ -2267,15 +2321,15 @@ def build_scope(project_name: str | None, repo_path: str | None) -> dict:
         },
         "repos": [],
     }
-    if project_name and repo_path:
+    if project_name and repo_ref:
         scope["repos"].append({
             "logicalName": project_name,
-            "actualRoot": repo_path,
+            "actualRoot": repo_ref,
             "include": True,
             "reason": "Initial repo seeded by llm-wiki-bootstrap.",
             "targets": [{
                 "logicalName": project_name,
-                "actualPath": repo_path,
+                "actualPath": repo_ref,
                 "type": "project-root",
                 "include": True,
                 "reason": "Initial whole-repo module.",
@@ -2287,7 +2341,9 @@ def build_scope(project_name: str | None, repo_path: str | None) -> dict:
 def create_scaffold(args: argparse.Namespace) -> list[str]:
     wiki_root = Path(args.wiki_root).resolve()
     repo_path = str(Path(args.repo_path).resolve()) if args.repo_path else None
+    source_root = str(Path(args.source_root).resolve()) if args.source_root else None
     project_name = args.project_name or (Path(repo_path).name if repo_path else None)
+    _path_variables, repo_ref = scope_repo_path(repo_path, source_root)
     created: list[str] = []
 
     dirs = [
@@ -2317,14 +2373,21 @@ def create_scaffold(args: argparse.Namespace) -> list[str]:
 
     scope_path = wiki_root / "wiki.scope.json"
     if not scope_path.exists() or args.overwrite_scope:
-        write_json(scope_path, build_scope(project_name, repo_path), overwrite=True)
+        write_json(scope_path, build_scope(project_name, repo_path, source_root), overwrite=True)
         created.append(str(scope_path))
     elif repo_path and project_name:
         scope = json.loads(scope_path.read_text(encoding="utf-8"))
+        variables = scope.get("pathVariables")
+        if not isinstance(variables, dict):
+            variables = {}
+            scope["pathVariables"] = variables
+        default_source_root = source_root or str(Path(repo_path).parent.resolve())
+        if repo_ref and repo_ref.startswith("${domainRoot}") and not variables.get("domainRoot"):
+            variables["domainRoot"] = default_source_root
         repos = scope.setdefault("repos", [])
-        exists = any(r.get("logicalName") == project_name or r.get("actualRoot") == repo_path for r in repos)
+        exists = any(r.get("logicalName") == project_name or r.get("actualRoot") in {repo_path, repo_ref} for r in repos)
         if not exists:
-            repos.append(build_scope(project_name, repo_path)["repos"][0])
+            repos.append(build_scope(project_name, repo_path, source_root)["repos"][0])
             write_json(scope_path, scope, overwrite=True)
             created.append(str(scope_path))
 
@@ -2333,6 +2396,8 @@ def create_scaffold(args: argparse.Namespace) -> list[str]:
         intake_text = (
             f"# {project_name} Intake\n\n"
             f"- repo path: `{repo_path}`\n"
+            f"- repo metadata path: `{repo_ref or repo_path}`\n"
+            f"- source root: `{source_root or Path(repo_path).parent.resolve()}`\n"
             f"- wiki root: `{wiki_root}`\n"
             f"- python command: `{args.python_command}`\n"
             f"- created: `{now_iso()}`\n\n"
@@ -2349,6 +2414,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wiki-root", required=True)
     parser.add_argument("--repo-path")
+    parser.add_argument("--source-root")
     parser.add_argument("--project-name")
     parser.add_argument("--python-command", default=sys.executable)
     parser.add_argument("--overwrite-scripts", action="store_true")

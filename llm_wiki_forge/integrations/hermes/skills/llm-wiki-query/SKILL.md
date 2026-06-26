@@ -12,7 +12,7 @@ This skill copy lives under a Linux/WSL Hermes environment. Assume a Linux shell
 - Use `bash`, `test`, `ls`, `rg`, `python3`, or `/home/tedhsu/.hermes/hermes-agent/venv/bin/python` for runnable commands.
 - Do not run Windows-only shell scripts from WSL/Hermes unless the user explicitly switches to a Windows/Codex execution context.
 - Treat Windows-only snippets as Codex-desktop examples. In WSL, report the required Windows step instead of pretending the gate passed.
-- For read-only query/eval work in Hermes, prefer `/home/tedhsu/.hermes/data/llm-wiki` and the Hermes venv Python.
+- For read-only query/eval work in Hermes, prefer `/home/tedhsu/llm-wiki/dispatch` and the Hermes venv Python.
 - Build, sync, query, source-search, eval, and community runtime commands are provided by `llm_wiki_forge`. Do not depend on `scripts/` inside the wiki root; that directory is legacy only.
 Use this skill to answer codebase questions from the local LLM Wiki with evidence.
 
@@ -22,22 +22,22 @@ When the `llm_wiki_query` tool is available, use it as the first entrypoint inst
 
 Slack and other chat platforms should use `detail="compact"` unless the user is explicitly debugging the runtime. Compact mode keeps snippets small and preserves full auditability through `evidence_pack`.
 
-When `llm_wiki_query` returns `next_action=run_source_search`, call `llm_wiki_source_search` with one fixed-string pattern at a time. Keep the terminal commands below as diagnostics or fallback for sessions where the toolset is unavailable.
+When `llm_wiki_query` returns `next_action=run_source_search`, call `llm_wiki_source_search` with one fixed-string pattern at a time. If the query result includes `scope_intent.root_selection.selected_wiki_root`, pass that value as `wiki_root` on each follow-up source search so platform-specific roots such as Android do not fall back to the default dispatch wiki. Keep the terminal commands below as diagnostics or fallback for sessions where the toolset is unavailable.
 
 ## Workspace
 
 Default LLM Wiki root:
 
 ```text
-/home/tedhsu/.hermes/data/llm-wiki
+/home/tedhsu/llm-wiki/dispatch
 ```
 
 Canonical absolute paths:
 
 ```text
-Wiki modules dir: /home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/modules
-Wiki query runs dir: /home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/query_runs
-Main TGDS source root: /home/tedhsu/DispatchRawdata/RD.TGDS
+Wiki modules dir: /home/tedhsu/llm-wiki/dispatch/Wiki/_data/modules
+Wiki query runs dir: /home/tedhsu/llm-wiki/dispatch/Wiki/_data/query_runs
+Main TGDS source root: /home/tedhsu/codebases/dispatch/RD.TGDS
 ```
 
 ## Standard Query
@@ -45,7 +45,7 @@ Main TGDS source root: /home/tedhsu/DispatchRawdata/RD.TGDS
 When running inside WSL/Hermes and the terminal policy allows normal execution, run from the LLM Wiki root and use the Hermes agent venv Python. Do not run this from the project repo cwd, because `scripts/query_runtime` lives in the Wiki root.
 
 ```bash
-cd "/home/tedhsu/.hermes/data/llm-wiki"
+cd "/home/tedhsu/llm-wiki/dispatch"
 /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code query --wiki-root . --question "<user question>" --top 5 --extract-limit 4 --json
 ```
 
@@ -72,18 +72,19 @@ When running inside Slack Hermes query-only mode:
 1. First check the available tool names in the current session. Do not assume `search_files`, `read_file`, or `terminal` exist.
 2. If `terminal` is available, the Slack read-only guard allowlists this exact orchestrator shape:
    ```bash
-   cd "/home/tedhsu/.hermes/data/llm-wiki" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code query --wiki-root . --question "<user question>" --top 5 --extract-limit 4 --json
+   cd "/home/tedhsu/llm-wiki/dispatch" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code query --wiki-root . --question "<user question>" --top 5 --extract-limit 4 --json
    ```
 3. The guard also allowlists `llm_wiki_forge code source-search` with fixed flags for deterministic grep. Do not use heredoc Python, shell arrays, arbitrary `python -m ...`, redirects, package installs, service restarts, or write commands. They are intentionally blocked in Slack.
 4. Prefer the orchestrator result first. Inspect `decision`, `why`, `coverage`, `candidate_sources`, and `graph_status` before answering. Use `read_file` only for files named by `candidate_sources`, `read_verify`, or the evidence pack. Do not use `search_files` in Slack for LLM Wiki code search.
 5. If the orchestrator is not immediately runnable under the allowlist, skip repeated terminal attempts and go straight to Wiki module JSON plus exact source file verification.
-6. The module directory is **always** `/home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/modules`. Never use `/home/tedhsu/.hermes/data/llm-wiki/_data/modules`.
-7. The query-run directory is **always** `/home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/query_runs`.
+6. The module directory is **always** `/home/tedhsu/llm-wiki/dispatch/Wiki/_data/modules`. Never use `/home/tedhsu/llm-wiki/dispatch/_data/modules`.
+7. The query-run directory is **always** `/home/tedhsu/llm-wiki/dispatch/Wiki/_data/query_runs`.
 8. If no file/search/terminal tool is available, do not call missing tools and do not expose tool names as an error. Reply in Traditional Chinese that the current Slack session cannot access source evidence, so the answer cannot be verified here; ask for a rough file/API/table hint or suggest retrying from a full Hermes/Codex context.
 9. In Slack, call `llm_wiki_query` with compact defaults. Do not request `detail="full"` unless the user is debugging evidence-pack generation.
 10. Treat `reused_evidence_pack=true` according to `reuse_decision`, not by itself. Answer directly only for `direct_reuse` or `validated_reuse`. If `reuse_decision=hint_only`, use the pack only as routing evidence and run one narrow verification search before answering. If `reuse_decision=bypass`, ignore the pack for answering.
-11. For `shards.query_shape=multi_module`, answer by merging the returned shard summaries first. Do not fan out broad searches unless the shard summary is insufficient and the user needs code-level depth.
-12. Per Slack turn budget: at most 1 broad `llm_wiki_query`, 1 narrow follow-up `llm_wiki_query`, 3 `llm_wiki_source_search` calls, and 4 source file reads. If the answer is still partial, answer the supported part and mark the rest as "目前找不到直接證據".
+11. When follow-up source search is needed, preserve the selected wiki root from `scope_intent.root_selection.selected_wiki_root`; do not let Android/iOS queries fall back to the default dispatch root.
+12. For `shards.query_shape=multi_module`, answer by merging the returned shard summaries first. Do not fan out broad searches unless the shard summary is insufficient and the user needs code-level depth.
+13. Per Slack turn budget: at most 1 broad `llm_wiki_query`, 1 narrow follow-up `llm_wiki_query`, 3 `llm_wiki_source_search` calls, and 4 source file reads. If the answer is still partial, answer the supported part and mark the rest as "目前找不到直接證據".
 
 Tool schema rule:
 
@@ -98,7 +99,7 @@ When `decision=needs_semantic_expansion`, the runtime has intentionally stopped 
 Run only one hypothesis at a time:
 
 ```bash
-cd "/home/tedhsu/.hermes/data/llm-wiki" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "<LLM-generated fixed string>" --limit 20 --json
+cd "/home/tedhsu/llm-wiki/dispatch" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "<LLM-generated fixed string>" --limit 20 --json
 ```
 
 After each `source_search`, judge the returned matches/read-verify snippets as evidence. If several hypotheses remain plausible but none has fact-grade support, ask the user to choose a direction instead of continuing blind search.
@@ -149,7 +150,7 @@ If the user asks about an exact code-looking identifier such as `JobTraState`, `
 If the exact identifier is absent, ignore `semantic.evidence_sufficiency.status=strong` for that question and immediately run deterministic source search. In Slack, prefer:
 
 ```bash
-cd "/home/tedhsu/.hermes/data/llm-wiki" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "EXACT_IDENTIFIER" --limit 20 --json
+cd "/home/tedhsu/llm-wiki/dispatch" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "EXACT_IDENTIFIER" --limit 20 --json
 ```
 
 Only answer "找不到" after this exact identifier search and the canonical fixed-root matrix both produce no direct source evidence.
@@ -191,7 +192,7 @@ When the orchestrator returns `answer_gate.status=needs_user_clarification`, ask
 `source_search` is the deterministic wrapper for repo-wide raw source verification. It uses fixed-string grep by default and expects explicit `--pattern` values from the outer LLM or exact-identifier gate. It does not do semantic expansion and does not own business aliases. Do not hand-build shell pipelines such as `a|b|c`.
 
 ```bash
-cd "/home/tedhsu/.hermes/data/llm-wiki" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "SYS_Variables" --limit 20 --json
+cd "/home/tedhsu/llm-wiki/dispatch" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "SYS_Variables" --limit 20 --json
 ```
 
 `search_files` is not part of the Slack LLM Wiki search path. Treat any empty or blocked `search_files` result as an internal signal only, not user-facing evidence.
@@ -227,10 +228,10 @@ When the question is about dispatch, car search, booking, fare, assignment, canc
 If graph runtime returns weak, irrelevant, empty, or single-module evidence, verify against this fixed matrix before answering negatively:
 
 ```text
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI
-/home/tedhsu/DispatchRawdata/TGDS-Dispatch-WebAPI
-/home/tedhsu/DispatchRawdata/DispatchRule
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS/CoreServers
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI
+/home/tedhsu/codebases/dispatch/TGDS-Dispatch-WebAPI
+/home/tedhsu/codebases/dispatch/DispatchRule
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS/CoreServers
 ```
 
 Required behavior:
@@ -244,18 +245,18 @@ Required behavior:
 
 These questions should not spend multiple rounds bouncing between modules.
 
-Do not start these questions with broad `search_files`. First run `query_orchestrator` or inspect the newest matching evidence pack under `/home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/query_runs` (for example filenames containing `固定車資`, `taxiplusv2`, or `計算公式`). If it contains relevant `synthesis_inputs.direct_evidence`, answer from that or read the named source files. If no evidence pack exists, read the exact files below first, then use targeted `source_search` only if the answer is still missing.
+Do not start these questions with broad `search_files`. First run `query_orchestrator` or inspect the newest matching evidence pack under `/home/tedhsu/llm-wiki/dispatch/Wiki/_data/query_runs` (for example filenames containing `固定車資`, `taxiplusv2`, or `計算公式`). If it contains relevant `synthesis_inputs.direct_evidence`, answer from that or read the named source files. If no evidence pack exists, read the exact files below first, then use targeted `source_search` only if the answer is still missing.
 
 Do not call `search_files` with pipe-combined patterns such as `固定車資|FixedFare|FixedPrice` or `預約池|ReservationPool|Reservation.*Pool` as a first strategy. In Slack/Hermes this can behave like a literal pattern and create false zero-result loops. Use one simple keyword at a time (`固定車資`, then `IsFixedPrice`, then `TaxiPlusQuotation`) through `source_search`.
 
 Read these exact files first:
 
 ```text
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Services/TaxiFareCalc.cs
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Controllers/APP/EstimatedFare/Taxi.cs
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Controllers/APP/Quotation/Quotation_Make.cs
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Models/App/Quotation.cs
-/home/tedhsu/DispatchRawdata/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Services/TaxiPlusV2Service.cs
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Services/TaxiFareCalc.cs
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Controllers/APP/EstimatedFare/Taxi.cs
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Controllers/APP/Quotation/Quotation_Make.cs
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Models/App/Quotation.cs
+/home/tedhsu/codebases/dispatch/RD.TGDS/DEV/TGDS-TaxiPlus/01_Code/TGDS.WebAPI/Services/TaxiPlusV2Service.cs
 ```
 
 Primary symbols:
@@ -289,7 +290,7 @@ This skill should broaden search coverage, not loop forever.
 Deterministic source-search pattern:
 
 ```bash
-cd "/home/tedhsu/.hermes/data/llm-wiki" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "KEYWORD" --limit 20 --json
+cd "/home/tedhsu/llm-wiki/dispatch" && /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code source-search --wiki-root . --pattern "KEYWORD" --limit 20 --json
 ```
 
 Use this for normal questions such as:
@@ -448,8 +449,8 @@ In WSL/Linux for diff planning or per-repo sync state only:
 
 ```bash
 /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --wiki-root /home/tedhsu/llm-wiki/dispatch \
+  --source-root /home/tedhsu/codebases/dispatch \
   --repo-key "<repoKey>" \
   --dry-run
 ```
@@ -458,8 +459,8 @@ To accept a per-repo baseline in WSL/Linux only after validation passes and the 
 
 ```bash
 /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --wiki-root /home/tedhsu/llm-wiki/dispatch \
+  --source-root /home/tedhsu/codebases/dispatch \
   --repo-key "<repoKey>"
 ```
 
@@ -536,16 +537,20 @@ The following subsections cover the full LLM Wiki lifecycle: onboarding, sync, i
 
 ## Subsection: Module Onboarding
 
-Use when a repo should be explicitly added to an LLM Wiki. The implementation entrypoint is `llm-wiki-forge`; do not edit `wiki.scope.json` by hand unless repairing a failed Forge run.
+Use when a repo should be explicitly added to the shared local LLM Wiki. The implementation entrypoint is `llm-wiki-forge`; do not edit `wiki.scope.json` by hand unless repairing a failed Forge run.
 
-No source or wiki path is canonical. Use the paths provided by the user or the active Hermes environment for this run.
+### Canonical Local Contract
+
+```text
+source root: /home/tedhsu/codebases/dispatch
+wiki root: /home/tedhsu/llm-wiki/dispatch
+repo registry: Wiki/_meta/repo_sync/repos.json
+python: /home/tedhsu/.hermes/hermes-agent/venv/bin/python
+```
 
 ### Required Inputs
 
-- `repo`: source repo path provided by the user
-- `source_root`: parent/root that the repo must stay under
-- `wiki_root`: LLM Wiki root provided by the user
-- `python`: current Hermes/Forge Python or user-provided interpreter
+- `repo`: folder name under `/home/tedhsu/codebases/dispatch` or an absolute path under that root
 - `repo_key`: stable registry key; default to repo folder name
 - `wiki_path`: target module logical name; default to `repo_key`
 - `tracked_branch`: default to the repo's current branch
@@ -555,10 +560,10 @@ No source or wiki path is canonical. Use the paths provided by the user or the a
 ### Primary Command
 
 ```bash
-<python> -m llm_wiki_forge repo add \
-  --repo "<repo>" \
-  --wiki-root "<wiki_root>" \
-  --source-root "<source_root>" \
+/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge repo add \
+  --repo /home/tedhsu/codebases/dispatch/<RepoName> \
+  --wiki-root /home/tedhsu/llm-wiki/dispatch \
+  --source-root /home/tedhsu/codebases/dispatch \
   --repo-key "<repoKey>" \
   --wiki-path "<wikiPath>"
 ```
@@ -567,7 +572,7 @@ Add `--schedule "<cron>"` only when the repo should also be registered for futur
 
 ### What Forge Must Do
 
-- validate repo path stays under the provided `source_root`
+- validate repo path stays under `/home/tedhsu/codebases/dispatch`
 - update exactly one repo entry in `wiki.scope.json`
 - update exactly one repo entry in `Wiki/_meta/repo_sync/repos.json`
 - run scope/module/community/query validation unless `--no-build` is supplied
@@ -590,7 +595,7 @@ Onboarding is complete only when:
 ### Failure Rules
 
 - Stop after a failed Forge command; inspect stdout/stderr and report the failed gate.
-- Do not substitute local-machine default paths for missing user inputs.
+- Do not add path hacks outside `DispatchRawdata`.
 - Do not hand-edit generated JSON/Markdown as the only durable fix.
 - Do not initialize or accept baseline before smoke evidence is acceptable unless the user explicitly accepts the risk.
 
@@ -603,9 +608,9 @@ Use for durable LLM Wiki maintenance from source git changes. Build/sync/onboard
 For a registered repo, run:
 
 ```bash
-<python> -m llm_wiki_forge update \
-  --wiki-root "<wiki_root>" \
-  --source-root "<source_root>" \
+/home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge update \
+  --wiki-root /home/tedhsu/llm-wiki/dispatch \
+  --source-root /home/tedhsu/codebases/dispatch \
   --repo-key "<repoKey>"
 ```
 
@@ -653,11 +658,11 @@ For impacted repos or runtime changes, inspect:
 
 ```bash
 rg -n "<repo_or_module>|owns|not_owns|business_terms|misleading_terms|entry_symbols|routing_examples" \
-  /home/tedhsu/.hermes/data/llm-wiki/Wiki/_data/modules \
-  /home/tedhsu/.hermes/data/llm-wiki/Wiki/01_Modules
+  /home/tedhsu/llm-wiki/dispatch/Wiki/_data/modules \
+  /home/tedhsu/llm-wiki/dispatch/Wiki/01_Modules
 
 /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code query \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root /home/tedhsu/llm-wiki/dispatch \
   --question "<repo_name> 的主要責任是什麼？" \
   --top 5 --extract-limit 4 --json
 ```
@@ -836,7 +841,7 @@ Use this workflow when the main query returns partial/weak evidence, when the us
 Prefer the semantic graph runtime from the active Hermes wiki copy:
 
 ```bash
-cd "/home/tedhsu/.hermes/data/llm-wiki"
+cd "/home/tedhsu/llm-wiki/dispatch"
 /home/tedhsu/.hermes/hermes-agent/venv/bin/python -m llm_wiki_forge code query --wiki-root . --question "<question>" --top 5 --extract-limit 4 --json
 ```
 

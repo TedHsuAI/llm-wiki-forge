@@ -60,6 +60,31 @@ def resolve_workspace_path(wiki_root: Path, value: str) -> Path:
     return (wiki_root / path).resolve()
 
 
+def load_scope_path_variables(wiki_root: Path) -> dict[str, str]:
+    scope_path = wiki_root / "wiki.scope.json"
+    if not scope_path.exists():
+        return {}
+    try:
+        scope = read_json(scope_path)
+    except Exception:
+        return {}
+    variables = scope.get("pathVariables") if isinstance(scope, dict) else {}
+    return {str(key): str(value) for key, value in variables.items()} if isinstance(variables, dict) else {}
+
+
+def resolve_metadata_path(wiki_root: Path, value: str, variables: dict[str, str]) -> Path:
+    expanded = str(value)
+    for key, replacement in variables.items():
+        token = "${" + key + "}"
+        if token not in expanded:
+            continue
+        root = Path(replacement).expanduser()
+        if not root.is_absolute():
+            root = wiki_root / root
+        expanded = expanded.replace(token, str(root))
+    return resolve_workspace_path(wiki_root, expanded)
+
+
 def load_repo_registry(wiki_root: Path, config_file: str = "Wiki/_meta/repo_sync/repos.json") -> tuple[dict[str, Any], Path]:
     config_path = resolve_workspace_path(wiki_root, config_file)
     if not config_path.exists():
@@ -597,7 +622,8 @@ def invoke_repo_sync(
         source_root = source_root.expanduser().resolve()
         config, _config_path = load_repo_registry(wiki_root, config_file)
         repo_entry = find_repo_entry(config, repo_key)
-        repo_root = require_under(resolve_workspace_path(wiki_root, str(repo_entry["repoRoot"])), source_root, "repo_root")
+        path_variables = load_scope_path_variables(wiki_root)
+        repo_root = require_under(resolve_metadata_path(wiki_root, str(repo_entry["repoRoot"]), path_variables), source_root, "repo_root")
         state_file_spec = str(repo_entry["stateFile"])
         state_file = resolve_workspace_path(wiki_root, state_file_spec)
         tracked_branch = str(repo_entry["trackedBranch"])

@@ -396,7 +396,7 @@ def build_module_communities(
     graph = load_json(resolved_graph_path)
     nodes = graph.get("nodes") or []
     edges = graph.get("links") or graph.get("edges") or []
-    source_root = Path(str(module.get("resolvedPath") or "")) if module.get("resolvedPath") else None
+    source_root = _path_from_wiki_metadata(str(module.get("resolvedPath") or ""), wiki_root, path_variables) if module.get("resolvedPath") else None
 
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for node in nodes:

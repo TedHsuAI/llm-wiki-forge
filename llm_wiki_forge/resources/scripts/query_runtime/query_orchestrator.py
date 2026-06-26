@@ -553,9 +553,65 @@ def run_shadow_keyword_probe(
     }
 
 
+def _current_wiki_root() -> Path:
+    return Path(os.environ.get("HERMES_LLM_WIKI_ROOT") or ".").expanduser().resolve()
+
+
+def _path_variables() -> dict[str, str]:
+    scope_path = _current_wiki_root() / "wiki.scope.json"
+    try:
+        with scope_path.open(encoding="utf-8") as fh:
+            scope = json.load(fh)
+    except Exception:
+        return {}
+    variables = scope.get("pathVariables") if isinstance(scope, dict) else {}
+    return {str(key): str(value) for key, value in variables.items()} if isinstance(variables, dict) else {}
+
+
+def _expand_path_variables(path_text: str) -> str:
+    text = str(path_text or "").strip()
+    variables = _path_variables()
+    wiki_root = _current_wiki_root()
+    for key, value in variables.items():
+        token = "${" + key + "}"
+        if token not in text:
+            continue
+        root = Path(value).expanduser()
+        if not root.is_absolute():
+            root = wiki_root / root
+        text = text.replace(token, str(root))
+    return text.replace("${domainRoot}", str(DISPATCH_ROOT))
+
+
+def _metadata_text(path_text: str) -> str:
+    normalized = str(path_text or "").strip().replace("\\", "/")
+    try:
+        resolved = Path(normalized).expanduser().resolve()
+    except OSError:
+        return normalized
+    roots: list[tuple[str, Path]] = []
+    wiki_root = _current_wiki_root()
+    for key, value in _path_variables().items():
+        try:
+            root = Path(value).expanduser()
+            if not root.is_absolute():
+                root = wiki_root / root
+            roots.append((key, root.resolve()))
+        except OSError:
+            continue
+    roots.sort(key=lambda item: len(str(item[1])), reverse=True)
+    for key, root in roots:
+        try:
+            relative = resolved.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        return "${" + key + "}" + ("/" + relative if relative else "")
+    return normalized
+
+
 def _normalize_source_path(path_text: str) -> str:
     text = str(path_text or "").strip().replace("\\", "/")
-    text = text.replace("${domainRoot}", str(DISPATCH_ROOT))
+    text = _expand_path_variables(text)
     try:
         if text.startswith("/"):
             return str(Path(text).resolve()).replace("\\", "/").lower()
@@ -565,11 +621,7 @@ def _normalize_source_path(path_text: str) -> str:
 
 
 def _display_source_path(path_text: str) -> str:
-    normalized = str(path_text or "").strip().replace("\\", "/")
-    root = str(DISPATCH_ROOT)
-    if normalized.startswith(root + "/"):
-        return "${domainRoot}" + normalized[len(root):]
-    return normalized
+    return _metadata_text(str(path_text or "").strip())
 
 
 def _module_hit_from_catalog(module: dict[str, Any]) -> ModuleHit:

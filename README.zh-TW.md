@@ -87,6 +87,8 @@ llm_wiki_forge/integrations/hermes/
   tools/llm_wiki_query.py
   tools/llm_wiki_forge.py
   skills/llm-wiki-query/SKILL.md
+  skills/llm-wiki-query/references/*.md
+  skills/llm-wiki-query/scripts/*.py
   hooks/slack_readonly_guard.py
   tests/test_llm_wiki_query_tool.py
   manifest.json
@@ -143,8 +145,8 @@ python -m llm_wiki_forge --version
 
 ```bash
 llm-wiki update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --wiki-root <wiki_root> \
+  --source-root <source_root> \
   --repo-key <RepoKey>
 ```
 
@@ -152,8 +154,8 @@ llm-wiki update \
 
 ```bash
 llm-wiki update \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --wiki-root <wiki_root> \
+  --source-root <source_root> \
   --repo-key <RepoKey> \
   --dry-run
 ```
@@ -172,7 +174,7 @@ llm-wiki refresh --wiki-root <wiki_root> --repo <RepoName> --json
 
 ```bash
 llm-wiki code query \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --question "搜車中加小費的相關邏輯?" \
   --top 5 \
   --extract-limit 4 \
@@ -195,7 +197,7 @@ JSON payload 會包含：
 
 ```bash
 llm-wiki code source-search \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --pattern SearchTipEligibilityService \
   --limit 20 \
   --json
@@ -205,9 +207,9 @@ llm-wiki code source-search \
 
 ```bash
 llm-wiki repo add \
-  --repo /home/tedhsu/DispatchRawdata/<RepoName> \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
-  --source-root /home/tedhsu/DispatchRawdata \
+  --repo <source_root>/<RepoName> \
+  --wiki-root <wiki_root> \
+  --source-root <source_root> \
   --repo-key <RepoKey> \
   --wiki-path <WikiPath>
 ```
@@ -218,11 +220,7 @@ llm-wiki repo add \
 llm-wiki build --repo <repo_path> --wiki-root <wiki_root>
 ```
 
-如果省略 `--wiki-root`，Forge 預設使用：
-
-```text
-<repo_parent>/<repo_name>-llm-wiki
-```
+Forge 不推測來源或 Wiki root；請依當前機器明確傳入路徑。
 
 ## Hermes Integration
 
@@ -314,14 +312,14 @@ python -m llm_wiki_forge integrations install-hermes --hermes-root /home/tedhsu/
 
 ```bash
 python -m llm_wiki_forge code query \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --question "固定車資怎麼算" \
   --top 3 \
   --extract-limit 2 \
   --json
 
 python -m llm_wiki_forge code source-search \
-  --wiki-root /home/tedhsu/.hermes/data/llm-wiki \
+  --wiki-root <wiki_root> \
   --pattern JobTraState \
   --limit 1 \
   --json

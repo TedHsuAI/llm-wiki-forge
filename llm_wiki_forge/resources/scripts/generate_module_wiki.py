@@ -65,6 +65,7 @@ NOISE_WORDS = {
     "controller",
     "data",
     "default",
+    "domain",
     "dto",
     "entity",
     "enum",
@@ -91,6 +92,7 @@ NOISE_WORDS = {
     "repository",
     "request",
     "response",
+    "root",
     "service",
     "settings",
     "startup",
@@ -251,14 +253,30 @@ def platform_detection(source: Path) -> dict[str, Any]:
     }
 
 
-def source_files_for_item(item: dict[str, Any], platform: str) -> list[Path]:
-    source = Path(item["resolvedPath"])
+def item_source_path(wiki_root: Path, scope: dict[str, Any], item: dict[str, Any]) -> Path:
+    return resolve_metadata_path(wiki_root, scope, str(item.get("resolvedPath") or item.get("actualPath") or ""))
+
+
+def item_metadata_paths(wiki_root: Path, scope: dict[str, Any], values: list[str]) -> list[Path]:
+    return [resolve_metadata_path(wiki_root, scope, str(value)) for value in values]
+
+
+def source_files_for_item(*args: Any) -> list[Path]:
+    if len(args) == 2:
+        item, platform = args
+        wiki_root = Path(".").resolve()
+        scope: dict[str, Any] = {}
+    elif len(args) == 4:
+        wiki_root, scope, item, platform = args
+    else:
+        raise TypeError("source_files_for_item expects (item, platform) or (wiki_root, scope, item, platform)")
+    source = item_source_path(wiki_root, scope, item)
     if not source.exists():
         return []
     scan_root = source.parent if source.is_file() else source
-    excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
+    excluded_roots = item_metadata_paths(wiki_root, scope, item.get("resolvedExcludePaths") or item.get("excludePaths") or [])
     if platform == "csharp":
-        active_roots = [Path(project).resolve().parent for project in item.get("projectFiles") or [] if Path(project).exists()]
+        active_roots = [project.parent for project in item_metadata_paths(wiki_root, scope, item.get("projectFiles") or []) if project.exists()]
         enforce_scope = item.get("projectScopeSource") in {"solution_filter", "solution"} and bool(active_roots)
         files = []
         for path in scan_root.rglob("*.cs"):
@@ -475,8 +493,16 @@ def classify_entry(path: Path, text: str, symbols: list[dict[str, str]], platfor
     return "source_file"
 
 
-def scan_sources(item: dict[str, Any], platform: str, files: list[Path]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    source = Path(item["resolvedPath"])
+def scan_sources(*args: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if len(args) == 3:
+        item, platform, files = args
+        wiki_root = Path(".").resolve()
+        scope: dict[str, Any] = {}
+    elif len(args) == 5:
+        wiki_root, scope, item, platform, files = args
+    else:
+        raise TypeError("scan_sources expects (item, platform, files) or (wiki_root, scope, item, platform, files)")
+    source = item_source_path(wiki_root, scope, item)
     scan_root = source.parent if source.is_file() else source
     entries: list[dict[str, Any]] = []
     symbols: list[dict[str, Any]] = []
@@ -702,14 +728,14 @@ def build_module(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     name = str(item["logicalName"])
     module_id = slug(name)
-    source = Path(item["resolvedPath"])
+    source = item_source_path(wiki_root, scope, item)
     platform = detect_platform(source)
     detection = platform_detection(source)
-    files = source_files_for_item(item, platform)
-    entries, symbols = scan_sources(item, platform, files)
+    files = source_files_for_item(wiki_root, scope, item, platform)
+    entries, symbols = scan_sources(wiki_root, scope, item, platform, files)
     entry_points = [entry for entry in entries if int(entry.get("entryScore") or 0) > 0] or entries[:25]
     terms = summarize_terms(name, entries)
-    excluded_roots = [Path(path).resolve() for path in item.get("resolvedExcludePaths") or []]
+    excluded_roots = item_metadata_paths(wiki_root, scope, item.get("resolvedExcludePaths") or item.get("excludePaths") or [])
     android = discover_android_surfaces(source, excluded_roots) if platform == "android" and source.exists() else {}
     ios = discover_ios_surfaces(source, excluded_roots) if platform == "ios" and source.exists() else {}
     guard_note = (
@@ -756,7 +782,7 @@ def build_module(
         "project": name,
         "source_paths": [str(item["actualPath"])],
         "sourcePath": item["actualPath"],
-        "resolvedPath": item["resolvedPath"],
+        "resolvedPath": item["actualPath"],
         "generated_at": now_iso(),
         "generatedAt": now_iso(),
         "business_context": {

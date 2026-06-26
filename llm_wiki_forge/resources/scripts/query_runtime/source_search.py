@@ -257,6 +257,45 @@ def _expand_vars(value: str, variables: dict[str, str]) -> str:
     return result
 
 
+def _metadata_path(value: str, wiki_root: Path, variables: dict[str, str]) -> Path:
+    expanded = _expand_vars(str(value), variables)
+    path = Path(expanded).expanduser()
+    if not path.is_absolute():
+        path = wiki_root / path
+    return path.resolve()
+
+
+def _metadata_text(path_text: str, wiki_root: Path, variables: dict[str, str]) -> str:
+    try:
+        resolved = Path(path_text).expanduser().resolve()
+    except OSError:
+        return path_text
+    roots: list[tuple[str, Path]] = []
+    for key, value in variables.items():
+        try:
+            roots.append((str(key), _metadata_path(str(value), wiki_root, {})))
+        except OSError:
+            continue
+    roots.sort(key=lambda item: len(str(item[1])), reverse=True)
+    for key, root in roots:
+        try:
+            relative = resolved.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        return "${" + key + "}" + ("/" + relative if relative else "")
+    return str(resolved)
+
+
+def _scope_source_roots(wiki_root: Path) -> list[str]:
+    variables = _path_variables(wiki_root)
+    roots: list[str] = []
+    for key in ("domainRoot", "sourceRoot"):
+        value = variables.get(key)
+        if value:
+            roots.append(value)
+    return roots
+
+
 def _path_glob_from_value(value: Any) -> str | None:
     text = str(value or "").strip()
     if not text:
@@ -465,12 +504,13 @@ def _registry_source_roots(wiki_root: Path) -> list[str]:
 
 
 def _allowed_source_roots(wiki_root: Path) -> list[Path]:
-    raw_roots = _registry_source_roots(wiki_root) or [str(DISPATCH_ROOT)]
+    raw_roots = _registry_source_roots(wiki_root) or _scope_source_roots(wiki_root) or [str(DISPATCH_ROOT)]
+    variables = _path_variables(wiki_root)
     roots: list[Path] = []
     seen: set[str] = set()
     for raw in raw_roots:
         try:
-            root = Path(raw).expanduser().resolve()
+            root = _metadata_path(str(raw), wiki_root, variables)
         except OSError:
             continue
         key = str(root)
@@ -481,11 +521,11 @@ def _allowed_source_roots(wiki_root: Path) -> list[Path]:
     return roots or [DISPATCH_ROOT.resolve()]
 
 
-def _resolve_root(root_text: str, allowed_roots: list[Path]) -> Path | None:
+def _resolve_root(root_text: str, allowed_roots: list[Path], wiki_root: Path, variables: dict[str, str]) -> Path | None:
     try:
-        root = Path(root_text).expanduser()
+        root = Path(_expand_vars(root_text, variables)).expanduser()
         if not root.is_absolute():
-            root = allowed_roots[0] / root
+            root = allowed_roots[0] / root if allowed_roots else wiki_root / root
         root = root.resolve()
     except OSError:
         return None
@@ -498,11 +538,12 @@ def _resolve_root(root_text: str, allowed_roots: list[Path]) -> Path | None:
 def resolve_search_roots(wiki_root: Path, roots: list[str] | None = None) -> tuple[list[Path], list[str]]:
     errors: list[str] = []
     allowed_roots = _allowed_source_roots(wiki_root)
+    variables = _path_variables(wiki_root)
     raw_roots = roots or _repo_roots_from_config(wiki_root) or [str(root) for root in allowed_roots] or FALLBACK_ROOTS
     resolved: list[Path] = []
     seen: set[str] = set()
     for raw in raw_roots:
-        root = _resolve_root(str(raw), allowed_roots)
+        root = _resolve_root(str(raw), allowed_roots, wiki_root, variables)
         if root is None:
             errors.append(f"root outside allowed source tree: {raw}")
             continue
@@ -837,6 +878,12 @@ def search_source(
                 truncated = truncated or did_truncate
                 if error:
                     errors.append(error)
+
+    path_variables = _path_variables(wiki_root)
+    for match in matches:
+        path = match.get("path")
+        if path:
+            match["path"] = _metadata_text(str(path), wiki_root, path_variables)
 
     return {
         "query": query,

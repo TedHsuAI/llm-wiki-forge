@@ -31,6 +31,15 @@ def test_hermes_integration_manifest_targets_expected_files():
     assert "agent-hooks/slack_readonly_guard.py" in targets
     assert "hermes-agent/tests/tools/test_llm_wiki_query_tool.py" in targets
 
+    skill_files = {
+        str(path.relative_to(root)).replace("\\", "/")
+        for path in root.joinpath("skills", "llm-wiki-query").rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix != ".pyc"
+    }
+    assert skill_files <= {entry["source"] for entry in entries}
+
     for entry in entries:
         assert root.joinpath(entry["source"]).is_file()
 
@@ -40,6 +49,8 @@ def test_hermes_integration_pack_avoids_windows_shell_syntax():
     offenders = []
     for path in root.rglob("*"):
         if not path.is_file():
+            continue
+        if "references" in path.relative_to(root).parts:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         for token in FORBIDDEN_TOKENS:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Query"
+  short_description: "Query the local LLM Wiki with semantic evidence gates."
+  default_prompt: "Use the LLM Wiki query workflow to answer this codebase question from semantic routing, evidence sufficiency, and direct source evidence."

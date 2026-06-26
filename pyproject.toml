@@ -51,6 +51,9 @@ llm_wiki_forge = [
   "integrations/hermes/*.json",
   "integrations/hermes/tools/*.py",
   "integrations/hermes/skills/llm-wiki-query/*.md",
+  "integrations/hermes/skills/llm-wiki-query/agents/*.yaml",
+  "integrations/hermes/skills/llm-wiki-query/references/*.md",
+  "integrations/hermes/skills/llm-wiki-query/scripts/*.py",
   "integrations/hermes/hooks/*.py",
   "integrations/hermes/tests/*.py",
 ]

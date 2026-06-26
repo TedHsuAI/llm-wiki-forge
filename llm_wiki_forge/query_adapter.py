@@ -77,7 +77,25 @@ def _python_bin() -> str:
 
 
 def _domain_root() -> Path:
-    return Path(os.environ.get("HERMES_LLM_WIKI_DOMAIN_ROOT", DEFAULT_DOMAIN_ROOT)).expanduser()
+    variables = _scope_path_variables(_wiki_root())
+    root = variables.get("domainRoot") or os.environ.get("HERMES_LLM_WIKI_DOMAIN_ROOT", DEFAULT_DOMAIN_ROOT)
+    return Path(root).expanduser()
+
+
+def _scope_path_variables(root: Path) -> dict[str, str]:
+    scope = _load_json_file(root / "wiki.scope.json")
+    variables = scope.get("pathVariables") if isinstance(scope.get("pathVariables"), dict) else {}
+    return {str(key): str(value) for key, value in variables.items()}
+
+
+def _expand_scope_path(value: str, root: Path | None = None) -> str:
+    wiki_root = root or _wiki_root()
+    text = str(value or "")
+    for key, replacement in _scope_path_variables(wiki_root).items():
+        token = "${" + key + "}"
+        if token in text:
+            text = text.replace(token, replacement)
+    return text
 
 
 def _runtime_available() -> bool:
@@ -271,7 +289,7 @@ def _repo_roots() -> dict[str, Path]:
         if not isinstance(item, dict) or item.get("Included") is False:
             continue
         logical = item.get("LogicalRepo")
-        actual = str(item.get("ActualRoot") or "").replace("${domainRoot}", str(domain))
+        actual = _expand_scope_path(str(item.get("ActualRoot") or "")).replace("${domainRoot}", str(domain))
         if logical and actual:
             roots[_norm_key(logical)] = Path(actual)
     defaults = {
@@ -308,8 +326,8 @@ def _resolve_source_path(file_path: Any, *, repo_id: Any = None, roots: dict[str
     if not raw:
         return None
     domain = _domain_root()
-    if raw.startswith("${domainRoot}"):
-        return Path(raw.replace("${domainRoot}", str(domain), 1))
+    if raw.startswith("${"):
+        return Path(_expand_scope_path(raw).replace("${domainRoot}", str(domain)))
     path = Path(raw)
     if path.is_absolute():
         return path

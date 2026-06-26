@@ -30,6 +30,8 @@ llm_wiki_forge/integrations/hermes/
   tools/llm_wiki_query.py
   tools/llm_wiki_forge.py
   skills/llm-wiki-query/SKILL.md
+  skills/llm-wiki-query/references/*.md
+  skills/llm-wiki-query/scripts/*.py
   hooks/slack_readonly_guard.py
   tests/test_llm_wiki_query_tool.py
   manifest.json

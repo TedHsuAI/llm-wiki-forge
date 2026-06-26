@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from importlib import resources
@@ -90,10 +92,17 @@ def print_context(repo_path: Path | None, wiki_root: Path, python_path: Path, pr
     info(f"Mode: {mode}")
 
 
+def infer_source_root(repo_path: Path, explicit: str | None) -> Path:
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return repo_path.parent.resolve()
+
+
 def run_bootstrap(args: argparse.Namespace) -> Path:
     repo_path = Path(args.repo).expanduser().resolve() if args.repo else None
     if repo_path and not repo_path.exists():
         raise SystemExit(f"Repo path does not exist: {repo_path}")
+    source_root = infer_source_root(repo_path, args.source_root) if repo_path else None
 
     wiki_root = infer_wiki_root(repo_path, args.wiki_root) if repo_path else Path(args.wiki_root).expanduser().resolve()
     project_name = infer_project_name(repo_path, args.project_name) if repo_path else args.project_name
@@ -110,6 +119,8 @@ def run_bootstrap(args: argparse.Namespace) -> Path:
     ]
     if repo_path:
         command += ["--repo-path", str(repo_path)]
+    if source_root:
+        command += ["--source-root", str(source_root)]
     if project_name:
         command += ["--project-name", project_name]
     run(command)
@@ -199,12 +210,55 @@ def _git_stdout(repo_path: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _scope_path(repo_path: Path, source_root: Path) -> str:
+def _safe_var_suffix(value: str) -> str:
+    suffix = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_")
+    return suffix or "Repo"
+
+
+def _path_from_scope_value(value: str, wiki_root: Path) -> Path:
+    path = Path(str(value))
+    if path.is_absolute():
+        return path.expanduser().resolve()
+    return (wiki_root / path).resolve()
+
+
+def _format_scope_child(var_name: str, relative: str) -> str:
+    return "${" + var_name + "}" + ("/" + relative if relative else "")
+
+
+def _scope_path(repo_path: Path, source_root: Path, scope: dict | None = None, wiki_root: Path | None = None, repo_key: str | None = None) -> str:
+    scope = scope or {}
+    variables = scope.setdefault("pathVariables", {}) if isinstance(scope, dict) else {}
+    if not isinstance(variables, dict):
+        variables = {}
+        scope["pathVariables"] = variables
+
+    resolved_repo = repo_path.resolve()
+    resolved_source = source_root.resolve()
+    if "domainRoot" not in variables:
+        variables["domainRoot"] = str(resolved_source)
+
+    variable_items: list[tuple[str, Path]] = []
+    for key, value in variables.items():
+        try:
+            variable_items.append((str(key), _path_from_scope_value(str(value), wiki_root or resolved_source)))
+        except OSError:
+            continue
+    variable_items.sort(key=lambda item: len(str(item[1])), reverse=True)
+    for key, root in variable_items:
+        try:
+            relative = resolved_repo.relative_to(root).as_posix()
+            return _format_scope_child(key, relative)
+        except ValueError:
+            continue
+
     try:
-        relative = repo_path.resolve().relative_to(source_root.resolve()).as_posix()
-        return "${domainRoot}/" + relative
+        relative = resolved_repo.relative_to(resolved_source).as_posix()
+        key = f"{_safe_var_suffix(repo_key or repo_path.name)}SourceRoot"
+        variables[key] = str(resolved_source)
+        return _format_scope_child(key, relative)
     except ValueError:
-        return str(repo_path)
+        return str(resolved_repo)
 
 
 def _upsert_scope_repo(wiki_root: Path, repo_key: str, repo_path: Path, wiki_path: str, source_root: Path) -> None:
@@ -218,7 +272,7 @@ def _upsert_scope_repo(wiki_root: Path, repo_key: str, repo_path: Path, wiki_pat
     if not isinstance(repos, list):
         raise SystemExit("wiki.scope.json field repos must be a list")
 
-    actual_root = _scope_path(repo_path, source_root)
+    actual_root = _scope_path(repo_path, source_root, scope, wiki_root, repo_key)
     entry = {
         "logicalName": repo_key,
         "actualRoot": actual_root,
@@ -249,7 +303,7 @@ def _upsert_scope_repo(wiki_root: Path, repo_key: str, repo_path: Path, wiki_pat
 def _upsert_repo_sync_config(
     wiki_root: Path,
     repo_key: str,
-    repo_path: Path,
+    repo_root_ref: str,
     tracked_branch: str,
     schedule: str | None,
 ) -> None:
@@ -264,7 +318,7 @@ def _upsert_repo_sync_config(
     entry = {
         "repoKey": repo_key,
         "displayName": repo_key,
-        "repoRoot": str(repo_path),
+        "repoRoot": repo_root_ref,
         "gitRemote": "origin",
         "trackedBranch": tracked_branch,
         "stateFile": f"Wiki/_meta/repo_sync/{repo_key}.json",
@@ -310,8 +364,9 @@ def command_repo_add(args: argparse.Namespace) -> None:
     python_path = ensure_python(wiki_root, install_requirements=args.install_requirements)
     print_context(repo_path, wiki_root, python_path, repo_key, "repo add")
 
+    repo_root_ref = _scope_path(repo_path, source_root, read_json(wiki_root / "wiki.scope.json"), wiki_root, repo_key)
     _upsert_scope_repo(wiki_root, repo_key, repo_path, wiki_path, source_root)
-    _upsert_repo_sync_config(wiki_root, repo_key, repo_path, tracked_branch, args.schedule)
+    _upsert_repo_sync_config(wiki_root, repo_key, repo_root_ref, tracked_branch, args.schedule)
     info(f"Updated scope and repo sync registry for {repo_key}.")
 
     if args.no_build:
@@ -328,6 +383,8 @@ def command_build(args: argparse.Namespace) -> None:
     repo_path = Path(args.repo).expanduser().resolve()
     if not repo_path.exists():
         raise SystemExit(f"Repo path does not exist: {repo_path}")
+    source_root = infer_source_root(repo_path, args.source_root)
+    require_under(repo_path, source_root, "repo")
     wiki_root = infer_wiki_root(repo_path, args.wiki_root)
     project_name = infer_project_name(repo_path, args.project_name)
     mode = "onboarding-only" if has_infrastructure(wiki_root) else "bootstrap+onboarding"
@@ -339,9 +396,15 @@ def command_build(args: argparse.Namespace) -> None:
             repo=str(repo_path),
             wiki_root=str(wiki_root),
             project_name=project_name,
+            source_root=str(source_root),
             install_requirements=args.install_requirements,
         )
         run_bootstrap(bootstrap_args)
+
+    tracked_branch = _git_stdout(repo_path, "rev-parse", "--abbrev-ref", "HEAD") or "main"
+    repo_root_ref = _scope_path(repo_path, source_root, read_json(wiki_root / "wiki.scope.json"), wiki_root, project_name)
+    _upsert_scope_repo(wiki_root, project_name, repo_path, project_name, source_root)
+    _upsert_repo_sync_config(wiki_root, project_name, repo_root_ref, tracked_branch, None)
 
     run_onboarding_steps(wiki_root, python_path, project_name, args.question)
     command_validate(argparse.Namespace(wiki_root=str(wiki_root), repo=project_name, question=args.question, install_requirements=False))
@@ -582,6 +645,7 @@ def build_parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="Bootstrap if needed, build one module, and validate.")
     build.add_argument("--repo", required=True, help="Source repo path.")
     build.add_argument("--wiki-root", required=True, help="LLM Wiki root.")
+    build.add_argument("--source-root", help="Outer source root used for ${domainRoot}. Defaults to the repo parent.")
     build.add_argument("--project-name", help="Module name. Defaults to repo folder name.")
     build.add_argument("--question", help="Smoke question.")
     build.add_argument("--install-requirements", action="store_true", help="Install requirements.txt into the selected Python environment when present.")
@@ -590,6 +654,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap = sub.add_parser("bootstrap", help="Create a first-run LLM Wiki root.")
     bootstrap.add_argument("--repo", help="Optional source repo path.")
     bootstrap.add_argument("--wiki-root", required=True, help="LLM Wiki root to create.")
+    bootstrap.add_argument("--source-root", help="Outer source root used for ${domainRoot}. Defaults to the repo parent.")
     bootstrap.add_argument("--project-name", help="Module name. Defaults to repo folder name.")
     bootstrap.add_argument("--install-requirements", action="store_true")
     bootstrap.set_defaults(func=lambda args: run_bootstrap(args))

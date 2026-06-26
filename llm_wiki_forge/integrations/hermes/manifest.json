@@ -17,6 +17,54 @@
       {
         "source": "skills/llm-wiki-query/SKILL.md",
         "target": "skills/llm-wiki-query/SKILL.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/agents/openai.yaml",
+        "target": "skills/llm-wiki-query/agents/openai.yaml"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/android-login-flow.md",
+        "target": "skills/llm-wiki-query/references/android-login-flow.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/community-path-mismatch.md",
+        "target": "skills/llm-wiki-query/references/community-path-mismatch.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/events-field-pattern.md",
+        "target": "skills/llm-wiki-query/references/events-field-pattern.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/forge-sync-timeout-pitfall.md",
+        "target": "skills/llm-wiki-query/references/forge-sync-timeout-pitfall.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/IVE-dispatch-message-flow.md",
+        "target": "skills/llm-wiki-query/references/IVE-dispatch-message-flow.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/semantic-evidence-contract.md",
+        "target": "skills/llm-wiki-query/references/semantic-evidence-contract.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/source-path-provenance.md",
+        "target": "skills/llm-wiki-query/references/source-path-provenance.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/special-fee-types.md",
+        "target": "skills/llm-wiki-query/references/special-fee-types.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/verdict-matrix.md",
+        "target": "skills/llm-wiki-query/references/verdict-matrix.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/references/wiki-fallback-to-source.md",
+        "target": "skills/llm-wiki-query/references/wiki-fallback-to-source.md"
+      },
+      {
+        "source": "skills/llm-wiki-query/scripts/get_system_variable_setting.py",
+        "target": "skills/llm-wiki-query/scripts/get_system_variable_setting.py"
       }
     ],
     "hooks": [
